@@ -1,0 +1,461 @@
+---
+title: "DS4I_Assignment 2_Version 2"
+author: "Hope Hennessy"
+date: "2025-10-01"
+output: pdf_document
+---
+
+
+Build an ensemble recommender system for book recommendations using a modified "Book-Crossing" dataset containing ratings (0-10 scale) from 10,000 users on 150 books.
+Core Requirements
+
+1. Build Four Types of Recommender Systems:
+
+* Item-based collaborative filtering (code from scratch)
+* User-based collaborative filtering (code from scratch)
+* Matrix factorization-based collaborative filtering
+* Neural network-based collaborative filtering
+
+2. System Capabilities:
+
+Recommend books to existing users
+Handle new users (assuming they provide ratings for ≤5 books initially)
+
+3. Evaluation and Analysis:
+
+* Compare accuracy across all four methods using cross-validation
+* Investigate the relationship between dataset size and accuracy (e.g., how does accuracy change with 5 vs 50 vs 100 titles?)
+* Determine if there's a point where adding more titles doesn't improve accuracy
+
+4. Data Analysis:
+
+* Conduct exploratory data analysis (EDA)
+* Use findings to inform train/test data splitting
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.width = 5, fig.height = 5, 
+                      fig.align = "center", warning = FALSE, message = FALSE, 
+                      fig.show = 'hold', out.width = '70%')
+
+
+library(tidyverse)
+library(patchwork)
+library(caret)
+library(kableExtra)
+library(recosystem)
+```
+
+```{r}
+load("book_ratings.Rdata")
+
+# Data structure
+head(book_info)
+str(book_info)
+dim(book_info)
+head(book_ratings)
+str(book_ratings)
+dim(book_ratings)
+head(user_info) # don't need Age to build recommender, but can include this info if want to go further
+str(user_info)
+dim(user_info)
+
+
+# print("Missing values in ratings:")
+sum(is.na(book_ratings$Book.Rating))
+print("Unique users:")
+length(unique(book_ratings$User.ID))
+print("Unique books:")
+length(unique(book_ratings$ISBN))
+
+
+# Check for missing values 
+colSums(is.na(book_info))
+colSums(is.na(book_ratings))
+colSums(is.na(user_info))  # 12098 missing Age values
+
+```
+
+```{r}
+# Merging book_ratings with book_info 
+data <- book_ratings %>%
+  left_join(book_info, by = "ISBN")
+
+summary(data) # can clearly see age has some impossible outliers
+head(data)
+dim(data)
+
+sapply(data, function(x) if(is.numeric(x)) range(x, na.rm = TRUE)) # check var ranges
+
+table(data$Book.Rating) # Zero means no rating
+
+
+length(unique(data$User.ID))
+length(data$User.ID)
+
+```
+
+```{r}
+# Group and count the number of records per User.ID
+hist_data <- data %>%
+  group_by(User.ID) %>%
+  count(name = "count")
+hist_data
+
+# Check the maximum count
+max(hist_data$count)
+
+# Plot using ggplot
+ggplot(hist_data, aes(x = User.ID, y = count)) +
+  geom_col() +
+  labs(x = "User ID", y = "Count", title = "Counts per User ID") +
+  theme_minimal()
+
+```
+
+
+
+### Adding Age to dataset
+
+```{r}
+# Merge with user_info to include age 
+full_data <- data %>%
+  left_join(user_info, by = "User.ID")
+
+boxplot(full_data$Age) # Age has some very large outliers
+full_data <- full_data %>% filter(full_data$Age < 110) 
+# data %>% filter(Age < 5)
+```
+
+
+
+
+```{r}
+hist(data$Book.Rating, main = "Distribution of Jester Ratings",
+     col = "yellow", xlab = "Ratings")
+```
+
+
+
+
+# User-Based Collaborative Filtering (UBCF)
+
+
+```{r}
+# Create small sample for testing code
+set.seed(123) 
+sample_users <- sample(unique(book_ratings$User.ID), 5000)
+sample_data <- data %>% filter(User.ID %in% sample_users)
+
+# Convert 0 ratings to NA (unrated) 
+book_ratings_clean <- sample_data %>%
+  mutate(Book.Rating = ifelse(Book.Rating == 0, NA, Book.Rating))
+
+# Convert to wide format 
+user_item_matrix <- book_ratings_clean %>% 
+  select(User.ID, ISBN, Book.Rating) %>%
+  pivot_wider(names_from = ISBN, values_from = Book.Rating, values_fill = NA)
+
+# Convert to matrix
+user_ids <- user_item_matrix$User.ID
+user_item_matrix <- as.matrix(user_item_matrix[, -1])
+rownames(user_item_matrix) <- user_ids
+
+cat("Matrix dimensions:", nrow(user_item_matrix), "users x", ncol(user_item_matrix), "books\n")
+
+# --------------------------
+# Cosine Similarity Function 
+# --------------------------
+
+cosine_similarity <- function(a, b) {
+  valid <- !is.na(a) & !is.na(b)  # TRUE only when both users rated the same book
+  if (sum(valid) == 0) return(0)  # no books in common - similarity of 0 
+  
+  a <- a[valid]
+  b <- b[valid]
+  crossprod(a, b) / sqrt(crossprod(a) * crossprod(b))
+}
+
+# --------------------------
+# Similarity Matrix (FAST METHOD)
+# --------------------------
+
+cat("\nCalculating similarity matrix (fast method)...\n")
+
+system.time({
+  n_users <- nrow(user_item_matrix)
+  user_similarity_matrix <- matrix(0, nrow = n_users, ncol = n_users)
+  rownames(user_similarity_matrix) <- rownames(user_item_matrix)
+  colnames(user_similarity_matrix) <- rownames(user_item_matrix)
+  
+  # Replace NA with 0 for matrix operations
+  mat <- user_item_matrix
+  mat[is.na(mat)] <- 0
+  
+  # Calculate dot products (numerator of cosine similarity)
+  numerator <- mat %*% t(mat)  # User x User matrix of dot products
+  
+  # Calculate magnitudes (denominator)
+  magnitudes <- sqrt(rowSums(mat^2))  # Vector of magnitudes for each user
+  denominator <- magnitudes %*% t(magnitudes)  # User x User matrix
+  
+  # Calculate cosine similarity
+  user_similarity_matrix <- numerator / denominator
+  
+  # Handle edge cases
+  user_similarity_matrix[is.nan(user_similarity_matrix)] <- 0  # 0/0 = NaN, set to 0
+  user_similarity_matrix[is.infinite(user_similarity_matrix)] <- 0  # Division by 0
+  
+  # Set diagonal to 0 (self-similarity)
+  diag(user_similarity_matrix) <- 0
+  
+  # Add row/column names
+  rownames(user_similarity_matrix) <- rownames(user_item_matrix)
+  colnames(user_similarity_matrix) <- rownames(user_item_matrix)
+})
+
+cat("Similarity matrix complete!\n\n")
+
+# Check similarity distribution
+cat("Similarity statistics:\n")
+sim_values <- user_similarity_matrix[upper.tri(user_similarity_matrix)]
+cat("Min:", min(sim_values), "\n")
+cat("Max:", max(sim_values), "\n")
+cat("Mean:", mean(sim_values), "\n")
+cat("Median:", median(sim_values), "\n\n")
+
+# --------------------------
+# Predictions 
+# --------------------------
+
+# Predict a single book rating for a user using standardized weighted similarities
+predict_rating <- function(target_user, book_isbn, user_item_matrix, user_sim_matrix) {
+  target_user <- as.character(target_user)
+  if (!target_user %in% rownames(user_item_matrix) || 
+      !book_isbn %in% colnames(user_item_matrix)) return(NA)
+  
+  sims <- user_sim_matrix[target_user, ]
+  rated_users <- !is.na(user_item_matrix[, book_isbn])
+  sims <- sims * rated_users
+  
+  if (sum(sims) == 0) return(NA)
+  
+  weights <- sims / sum(sims)
+  sum(weights * user_item_matrix[, book_isbn], na.rm = TRUE)
+}
+
+# Predict top N unread books for a user
+predict_user_ratings <- function(target_user, user_item_matrix, user_sim_matrix, book_info, n_recommendations = 10) {
+  
+  unread_books <- colnames(user_item_matrix)[is.na(user_item_matrix[target_user, ])]
+  
+  preds <- sapply(unread_books, function(book) {
+    predict_rating(target_user, book, user_item_matrix, user_sim_matrix)
+  })
+  
+  top_books <- sort(preds, decreasing = TRUE)[1:min(n_recommendations, length(preds))]
+  
+  recommendations <- data.frame(ISBN = names(top_books), Predicted_Rating = top_books) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+
+# --------------------------
+# Explain Recommendations
+# --------------------------
+
+explain_recommendations <- function(target_user, user_item_matrix, user_sim_matrix, book_info, top_n_neighbors = 5) {
+  
+  target_user <- as.character(target_user)
+  sims <- user_sim_matrix[target_user, ]
+  
+  neighbors <- data.frame(User.ID = names(sims), Similarity = sims) %>%
+    filter(User.ID != target_user, Similarity > 0) %>%
+    arrange(desc(Similarity)) %>%
+    head(top_n_neighbors)
+  
+  cat("Top similar users to", target_user, ":\n")
+  print(neighbors)
+  
+  cat("\nBooks highly rated by these users:\n")
+  for (i in 1:nrow(neighbors)) {
+    neighbor_id <- neighbors$User.ID[i]
+    high_rated <- which(user_item_matrix[neighbor_id, ] >= 7 & !is.na(user_item_matrix[neighbor_id, ]))
+    if (length(high_rated) > 0) {
+      book_isbns <- colnames(user_item_matrix)[high_rated[1:min(5, length(high_rated))]]
+      book_titles <- book_info$Book.Title[match(book_isbns, book_info$ISBN)]
+      cat("\nUser", neighbor_id, "(similarity:", round(neighbors$Similarity[i], 3), "):\n")
+      for (title in book_titles) cat(" -", title, "\n")
+    }
+  }
+}
+
+# --------------
+# Example Usage
+# --------------
+
+sample_user <- rownames(user_item_matrix)[1]
+cat("\nTop 10 recommendations for User", sample_user, ":\n")
+recs <- predict_user_ratings(sample_user, user_item_matrix, user_similarity_matrix, 
+                             book_info, n_recommendations = 10)
+print(recs)
+
+explain_recommendations(sample_user, user_item_matrix, user_similarity_matrix, book_info, top_n_neighbors = 50)
+```
+
+
+
+
+
+
+
+
+
+
+# Item-Based Collaborative Filtering (IBCF)
+
+USING item-mean normalization!!!! (ensure the other methods do the same thing!)
+
+```{r}
+# ---------------------------------
+# Item-based CF with normalization
+# ---------------------------------
+
+# Compute item similarity using mean-centered ratings
+compute_item_similarity_centered <- function(user_item_matrix) {
+  mat <- user_item_matrix
+  # compute item means (ignoring NA)
+  item_means <- colMeans(mat, na.rm = TRUE)
+  
+  # center ratings by subtracting item mean
+  centered <- sweep(mat, 2, item_means, FUN = "-")
+  
+  # replace NA with 0 for dot products
+  centered0 <- centered
+  centered0[is.na(centered0)] <- 0
+  
+  # dot-products (items x items)
+  numerator <- t(centered0) %*% centered0
+  
+  # magnitudes
+  mags <- sqrt(colSums(centered0^2))
+  denom <- outer(mags, mags, FUN = "*")
+  
+  sim <- numerator / denom
+  sim[is.nan(sim)] <- 0
+  sim[is.infinite(sim)] <- 0
+  diag(sim) <- 1
+  
+  return(list(similarity = as.matrix(sim), item_means = item_means))
+}
+
+```
+
+```{r}
+# Predict rating with normalization
+predict_rating_item_based_centered <- function(user_id, item_id, user_item_matrix, sim_obj, k = NULL, 
+                                               min_sim_threshold = 0) {
+  user_id <- as.character(user_id)
+  if (!user_id %in% rownames(user_item_matrix)) return(NA)
+  if (!item_id %in% colnames(user_item_matrix)) return(NA)
+  
+  sim_matrix <- sim_obj$similarity
+  item_means <- sim_obj$item_means
+  
+  # user’s ratings
+  user_row <- user_item_matrix[user_id, ]
+  rated_idx <- which(!is.na(user_row))
+  if (length(rated_idx) == 0) return(NA)
+  
+  rated_items <- colnames(user_item_matrix)[rated_idx]
+  
+  # similarities between target item and items rated by user
+  sims <- sim_matrix[item_id, rated_items]
+  
+  # keep only those above threshold
+  keep <- which(sims > min_sim_threshold)
+  if (length(keep) == 0) return(NA)
+  sims <- sims[keep]
+  rated_items <- rated_items[keep]
+  
+  # centered ratings for user’s rated items
+  ratings_centered <- user_row[rated_items] - item_means[rated_items]
+  
+  # optionally top-k
+  if (!is.null(k) && length(sims) > k) {
+    topk_idx <- order(abs(sims), decreasing = TRUE)[1:k]
+    sims <- sims[topk_idx]
+    ratings_centered <- ratings_centered[topk_idx]
+  }
+  
+  denom <- sum(abs(sims))
+  if (denom == 0) return(NA)
+  
+  pred_centered <- sum(sims * ratings_centered) / denom
+  
+  # add back mean of target item
+  pred <- item_means[item_id] + pred_centered
+  return(as.numeric(pred))
+}
+
+```
+
+
+
+```{r}
+# Recommend top-N with normalized item-based CF
+predict_topN_item_based_centered <- function(user_id, user_item_matrix, sim_obj, book_info,
+                                             n_recommendations = 10, k = 50, min_sim_threshold = 0) {
+  user_id <- as.character(user_id)
+  if (!user_id %in% rownames(user_item_matrix)) return(NULL)
+  
+  sim_matrix <- sim_obj$similarity
+  item_means <- sim_obj$item_means
+  
+  unread_items <- colnames(user_item_matrix)[is.na(user_item_matrix[user_id, ])]
+  
+  preds <- sapply(unread_items, function(it) {
+    predict_rating_item_based_centered(user_id, it, user_item_matrix, sim_obj, k = k, 
+                                       min_sim_threshold = min_sim_threshold)
+  })
+  
+  preds_df <- tibble(ISBN = unread_items, Predicted_Rating = preds) %>%
+    filter(!is.na(Predicted_Rating)) %>%
+    arrange(desc(Predicted_Rating)) %>%
+    slice_head(n = n_recommendations) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(preds_df)
+}
+
+```
+
+
+
+```{r}
+# Build similarity (centered)
+sim_obj_centered <- compute_item_similarity_centered(user_item_matrix)
+
+# Recommend for a sample user
+sample_user <- rownames(user_item_matrix)[13]
+cat("Top 10 normalized item-based CF recommendations for user", sample_user, ":\n")
+recs_norm <- predict_topN_item_based_centered(sample_user, user_item_matrix, sim_obj_centered, 
+                                              book_info, n_recommendations = 10, k = 10)
+print(recs_norm)
+
+```
+
+
+
+
+
+
+
+
+
+
