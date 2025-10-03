@@ -604,144 +604,710 @@ new_user_recs
 
 
 
-
-
-
-
-
-
-
 # Item-Based Collaborative Filtering (IBCF)
 
-USING item-mean normalization!!!! (ensure the other methods do the same thing!)
 
 ```{r}
-# ---------------------------------
-# Item-based CF with normalization
-# ---------------------------------
+# -----------------------------------------
+# 2. ITEM-MEAN NORMALIZATION OF THE MATRIX
+# -----------------------------------------
 
-# Compute item similarity using mean-centered ratings
-compute_item_similarity_centered <- function(user_item_matrix) {
-  mat <- user_item_matrix
-  # compute item means (ignoring NA)
-  item_means <- colMeans(mat, na.rm = TRUE)
+normalize_matrix <- function(user_item_matrix) {
   
-  # center ratings by subtracting item mean
-  centered <- sweep(mat, 2, item_means, FUN = "-")
+  # Center ratings - subtract item mean
+  item_means <- colMeans(user_item_matrix, na.rm = TRUE)
+  user_item_matrix_normalized <- sweep(user_item_matrix, 2, item_means, FUN = "-")
   
-  # replace NA with 0 for dot products
-  centered0 <- centered
-  centered0[is.na(centered0)] <- 0
-  
-  # dot-products (items x items)
-  numerator <- t(centered0) %*% centered0
-  
-  # magnitudes
-  mags <- sqrt(colSums(centered0^2))
-  denom <- outer(mags, mags, FUN = "*")
-  
-  sim <- numerator / denom
-  sim[is.nan(sim)] <- 0
-  sim[is.infinite(sim)] <- 0
-  diag(sim) <- 1
-  
-  return(list(similarity = as.matrix(sim), item_means = item_means))
+  return(list(normalized = user_item_matrix_normalized, item_means = item_means))
 }
 
 ```
 
+
 ```{r}
-# Predict rating with normalization
-predict_rating_item_based_centered <- function(user_id, item_id, user_item_matrix, sim_obj, k = NULL, 
-                                               min_sim_threshold = 0) {
-  user_id <- as.character(user_id)
-  if (!user_id %in% rownames(user_item_matrix)) return(NA)
-  if (!item_id %in% colnames(user_item_matrix)) return(NA)
+# ----------------------------
+# 3. COSINE SIMILARITY MATRIX 
+# ----------------------------
+
+# Measure how similar items are to each other based on rating patterns
+# Items rated similarly by users will have high cosine similarity
+
+compute_similarity_matrix <- function(user_item_matrix_normalized) {
   
-  sim_matrix <- sim_obj$similarity
-  item_means <- sim_obj$item_means
+  n_items <- ncol(user_item_matrix_normalized)
   
-  # user’s ratings
-  user_row <- user_item_matrix[user_id, ]
-  rated_idx <- which(!is.na(user_row))
-  if (length(rated_idx) == 0) return(NA)
+  # Replace NA with 0 - allows for matrix operations
+  mat <- user_item_matrix_normalized
+  mat[is.na(mat)] <- 0
   
-  rated_items <- colnames(user_item_matrix)[rated_idx]
+  # Transpose to work with items as rows
+  mat_t <- t(mat)
   
-  # similarities between target item and items rated by user
-  sims <- sim_matrix[item_id, rated_items]
+  # Dot products between item rating vectors (numerator)
+  numerator <- mat_t %*% t(mat_t)
   
-  # keep only those above threshold
-  keep <- which(sims > min_sim_threshold)
-  if (length(keep) == 0) return(NA)
-  sims <- sims[keep]
-  rated_items <- rated_items[keep]
+  # Magnitudes (denominator)
+  magnitudes <- sqrt(rowSums(mat_t^2))
+  denominator <- outer(magnitudes, magnitudes)
   
-  # centered ratings for user’s rated items
-  ratings_centered <- user_row[rated_items] - item_means[rated_items]
+  # Cosine similarity calculation
+  item_similarity_matrix <- numerator / denominator
   
-  # optionally top-k
-  if (!is.null(k) && length(sims) > k) {
-    topk_idx <- order(abs(sims), decreasing = TRUE)[1:k]
-    sims <- sims[topk_idx]
-    ratings_centered <- ratings_centered[topk_idx]
+  # Set self-similarity to 0
+  diag(item_similarity_matrix) <- 0
+
+  rownames(item_similarity_matrix) <- colnames(user_item_matrix_normalized)
+  colnames(item_similarity_matrix) <- colnames(user_item_matrix_normalized)
+  
+  return(item_similarity_matrix) # an item–item similarity matrix
+}
+
+```
+
+
+```{r}
+# --------------------------------------------------------
+# 4. RECOMMENDING FOR AN EXISTING USER (WITH USE OF K-NN)
+# --------------------------------------------------------
+
+recommend_for_user <- function(target_user, user_item_matrix, 
+                               user_item_matrix_normalized, item_sim_matrix,
+                               item_means, book_info, n_recommendations = 10, 
+                               k = NULL) {
+  
+  target_user <- as.character(target_user)
+  
+  # Get rated and unrated books for target user
+  user_ratings <- user_item_matrix[target_user, ]
+  rated_books <- names(user_ratings)[!is.na(user_ratings)]
+  unrated_books <- names(user_ratings)[is.na(user_ratings)]
+  
+  # If user has rated everything - no recommendations possible
+  if (length(unrated_books) == 0) {
+    return(data.frame())
   }
   
-  denom <- sum(abs(sims))
-  if (denom == 0) return(NA)
+  # Predict rating for each unrated book
+  predictions <- numeric(length(unrated_books))
+  names(predictions) <- unrated_books
   
-  pred_centered <- sum(sims * ratings_centered) / denom
+  for (target_item in unrated_books) {
+    
+    # Get similarities between target item and all rated items
+    sims <- item_sim_matrix[target_item, rated_books]
+    sims[is.na(sims)] <- 0
+    
+    # k-NN filtering – keeps only top k most similar items
+    if (!is.null(k) && k < length(sims)) {
+      non_zero_count <- sum(sims != 0)
+      
+      if (non_zero_count > 0) {
+        
+        k_actual <- min(k, non_zero_count)
+        
+        # Top k most similar items
+        top_k_items <- names(sort(sims, decreasing = TRUE)[1:k_actual])
+        
+        # Similarity vector with only top k items
+        sims_filtered <- rep(0, length(sims))
+        names(sims_filtered) <- names(sims)
+        sims_filtered[top_k_items] <- sims[top_k_items]
+        sims <- sims_filtered
+      }
+    }
+    
+    # If no similar items exist - can't make a prediction
+    if (sum(abs(sims) > 0) == 0) {
+      predictions[target_item] <- NA
+      next # skip to next unrated item
+    }
+    
+    # Get normalized ratings for similar items
+    normalized_ratings <- user_item_matrix_normalized[target_user, names(sims)]
+    normalized_ratings[is.na(normalized_ratings)] <- 0
+    
+    # Weighted sum of normalized ratings
+    weighted_sum <- sum(sims * normalized_ratings)
+    sum_abs_sims <- sum(abs(sims))
+    
+    # Avoid division by zero
+    if (sum_abs_sims == 0) {
+      predictions[target_item] <- NA
+    } else {
+      # Denormalize prediction
+      predictions[target_item] <- (weighted_sum / sum_abs_sims) + item_means[target_item]
+    }
+  }
   
-  # add back mean of target item
-  pred <- item_means[item_id] + pred_centered
-  return(as.numeric(pred))
-}
-
-```
-
-
-
-```{r}
-# Recommend top-N with normalized item-based CF
-predict_topN_item_based_centered <- function(user_id, user_item_matrix, sim_obj, book_info,
-                                             n_recommendations = 10, k = 50, min_sim_threshold = 0) {
-  user_id <- as.character(user_id)
-  if (!user_id %in% rownames(user_item_matrix)) return(NULL)
+  # Clip to valid rating range [1, 10]
+  predictions <- pmin(pmax(predictions, 1), 10)
   
-  sim_matrix <- sim_obj$similarity
-  item_means <- sim_obj$item_means
+  # Get top N recommendations
+  preds_valid <- predictions[!is.na(predictions)]
   
-  unread_items <- colnames(user_item_matrix)[is.na(user_item_matrix[user_id, ])]
+  # If no valid predictions - empty df
+  if (length(preds_valid) == 0) {
+    return(data.frame())
+  }
   
-  preds <- sapply(unread_items, function(it) {
-    predict_rating_item_based_centered(user_id, it, user_item_matrix, sim_obj, k = k, 
-                                       min_sim_threshold = min_sim_threshold)
-  })
+  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
   
-  preds_df <- tibble(ISBN = unread_items, Predicted_Rating = preds) %>%
-    filter(!is.na(Predicted_Rating)) %>%
-    arrange(desc(Predicted_Rating)) %>%
-    slice_head(n = n_recommendations) %>%
+  recommendations <- data.frame(
+    ISBN = names(top_books),
+    Predicted_Rating = as.numeric(top_books)) %>%
     left_join(book_info, by = "ISBN") %>%
     select(ISBN, Book.Title, Book.Author, Predicted_Rating)
   
-  return(preds_df)
+  return(recommendations)
+}
+
+```
+
+
+```{r}
+# ------------------------------------------
+# 5. RECOMMENDING FOR NEW USER (COLD START)
+# ------------------------------------------
+
+recommend_for_new_user <- function(new_user_ratings, user_item_matrix, 
+                                   user_item_matrix_normalized, item_means,
+                                   item_sim_matrix, book_info, 
+                                   n_recommendations = 10, k = NULL) {
+  
+  # Get rated and unrated books
+  rated_books <- names(new_user_ratings)
+  all_books <- colnames(user_item_matrix)
+  unrated_books <- setdiff(all_books, rated_books)
+  
+  # Check if any rated books match the training dataset
+  matched_books <- intersect(rated_books, all_books)
+  
+  if (length(matched_books) == 0) {
+    return(data.frame())
+  }
+  
+  if (length(unrated_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Normalize new user's ratings
+  new_user_mean <- mean(new_user_ratings[matched_books], na.rm = TRUE)
+  new_user_normalized <- new_user_ratings[matched_books] - new_user_mean
+  
+  # Predict rating for each unrated book
+  predictions <- numeric(length(unrated_books))
+  names(predictions) <- unrated_books
+  
+  for (target_item in unrated_books) {
+    
+    # Get similarities between target item and rated items
+    sims <- item_sim_matrix[target_item, matched_books]
+    sims[is.na(sims)] <- 0
+    
+    # k-NN filtering
+    if (!is.null(k) && k < length(sims)) {
+      non_zero_count <- sum(sims != 0)
+      if (non_zero_count > 0) {
+        k_actual <- min(k, non_zero_count)
+        top_k_items <- names(sort(sims, decreasing = TRUE)[1:k_actual])
+        sims_filtered <- rep(0, length(sims))
+        names(sims_filtered) <- names(sims)
+        sims_filtered[top_k_items] <- sims[top_k_items]
+        sims <- sims_filtered
+      }
+    }
+    
+    # If no similar items exist, skip
+    if (sum(abs(sims) > 0) == 0) {
+      predictions[target_item] <- NA
+      next
+    }
+    
+    # Get normalized ratings
+    normalized_ratings <- new_user_normalized[names(sims)]
+    
+    # Weighted sum
+    weighted_sum <- sum(sims * normalized_ratings)
+    sum_abs_sims <- sum(abs(sims))
+    
+    # Avoid division by zero
+    if (sum_abs_sims == 0) {
+      predictions[target_item] <- NA
+    } else {
+      # Denormalize prediction using item mean (not user mean for item-based)
+      predictions[target_item] <- (weighted_sum / sum_abs_sims) + item_means[target_item]
+    }
+  }
+  
+  # Clip to valid rating range [1, 10]
+  predictions <- pmin(pmax(predictions, 1), 10)
+  
+  # Get top N recommendations
+  preds_valid <- predictions[!is.na(predictions)]
+  
+  if (length(preds_valid) == 0) {
+    return(data.frame())
+  }
+  
+  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
+  
+  recommendations <- data.frame(
+    ISBN = names(top_books),
+    Predicted_Rating = as.numeric(top_books)) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+```
+
+
+```{r}
+# ================
+# MAIN WORKFLOW
+# ================
+
+# Step 1: Create user-item matrix
+user_item_matrix <- create_user_item_matrix(
+  data, 
+  min_ratings_per_book = 5, 
+  min_ratings_per_user = 3)
+
+# Step 2: Normalize matrix (by item means)
+normalized_result <- normalize_matrix(user_item_matrix)
+user_item_matrix_normalized <- normalized_result$normalized
+item_means <- normalized_result$item_means
+
+# Step 3: Compute item-item similarity matrix
+item_similarity_matrix <- compute_similarity_matrix(user_item_matrix_normalized)
+
+# =============================================
+# EXAMPLE 1: RECOMMENDATIONS FOR EXISTING USER
+# =============================================
+
+sample_user <- rownames(user_item_matrix)[1]
+
+recs <- recommend_for_user(
+  target_user = sample_user,
+  user_item_matrix = user_item_matrix,
+  user_item_matrix_normalized = user_item_matrix_normalized,
+  item_sim_matrix = item_similarity_matrix,
+  item_means = item_means,
+  book_info = book_info,
+  n_recommendations = 10,
+  k = 50)  # Use top 50 similar items
+
+recs
+
+# ======================================================
+# EXAMPLE 2: RECOMMENDATIONS FOR NEW USER (COLD START)
+# ======================================================
+
+# Simulate new user with 5 ratings
+sample_books <- colnames(user_item_matrix)[1:5]
+new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
+
+cat("New user rated:\n")
+for (isbn in names(new_user_ratings)) {
+  book_title <- book_info$Book.Title[book_info$ISBN == isbn][1]
+  if (!is.na(book_title)) {
+    cat("  -", book_title, ":", new_user_ratings[isbn], "\n")
+  }
+}
+
+new_user_recs <- recommend_for_new_user(
+  new_user_ratings = new_user_ratings,
+  user_item_matrix = user_item_matrix,
+  user_item_matrix_normalized = user_item_matrix_normalized,
+  item_means = item_means,
+  item_sim_matrix = item_similarity_matrix,
+  book_info = book_info,
+  n_recommendations = 10,
+  k = 50)  # Use top 50 similar items
+
+new_user_recs
+```
+
+
+
+
+
+
+# Matrix factorization-based collaborative filtering
+
+```{r}
+library(recosystem)
+```
+
+
+```{r}
+# ---------------------------------------------------------------
+# 1. EVALUATION FUNCTION WITH L2 REGULARIZATION AND BIAS
+# ---------------------------------------------------------------
+
+evaluate_fit_l2_bias <- function(params, observed_ratings, lambda, 
+                                  n_users, n_items, n_factors) {
+  
+  n_user_factors <- n_users * n_factors
+  n_item_factors <- n_items * n_factors
+  
+  # User latent factors: n_users x n_factors
+  user_factors <- matrix(params[1:n_user_factors], 
+                         nrow = n_users, ncol = n_factors)
+  
+  # Item latent factors: n_factors x n_items
+  item_factors <- matrix(params[(n_user_factors + 1):(n_user_factors + n_item_factors)], 
+                         nrow = n_factors, ncol = n_items)
+  
+  # User & Item biases 
+  user_bias <- params[(n_user_factors + n_item_factors + 1):
+                      (n_user_factors + n_item_factors + n_users)]
+  
+  item_bias <- params[(n_user_factors + n_item_factors + n_users + 1):
+                      length(params)]
+  
+  # Predicted ratings
+  predicted <- user_factors %*% item_factors + 
+    outer(user_bias, rep(1, n_items)) + 
+    outer(rep(1, n_users), item_bias)
+
+  # Compute RMSE only on observed ratings
+  errors <- (observed_ratings - predicted)^2
+  rmse <- sqrt(mean(errors[!is.na(observed_ratings)]))
+  
+  # L2 regularization INCLUDING bias terms
+  penalty <- sqrt(sum(user_factors^2) + sum(item_factors^2) + 
+                  sum(user_bias^2) + sum(item_bias^2))
+  
+  objective <- rmse + lambda * penalty
+  
+  return(objective)
+}
+  
+```
+
+
+```{r}
+# ---------------------------
+# 3. TRAIN MODEL USING OPTIM 
+# ---------------------------
+
+train_mf_optim <- function(user_item_matrix,
+                           n_factors = 10,
+                           lambda = 0.02,
+                           max_iterations = 100000,
+                           seed = 123) {
+  
+  set.seed(seed)
+  n_users <- nrow(user_item_matrix)
+  n_items <- ncol(user_item_matrix)
+  
+  global_mean <- mean(user_item_matrix, na.rm = TRUE)
+  centered_ratings <- user_item_matrix - global_mean
+  
+  n_params <- (n_users * n_factors) + (n_items * n_factors) + n_users + n_items
+  initial_params <- runif(n_params, min = -0.1, max = 0.1)
+  
+  result <- optim(
+    par = initial_params,
+    fn = evaluate_fit_l2_bias,
+    observed_ratings = centered_ratings,
+    lambda = lambda,
+    n_users = n_users,
+    n_items = n_items,
+    n_factors = n_factors,
+    control = list(maxit = max_iterations)
+  )
+  
+  # Extract parameters
+  user_factors <- matrix(result$par[1:(n_users*n_factors)], 
+                         nrow = n_users, ncol = n_factors)
+  
+  # FIXED: item_factors is n_factors x n_items
+  item_factors <- matrix(result$par[(n_users*n_factors + 1):
+                                    (n_users*n_factors + n_items*n_factors)],
+                         nrow = n_factors, ncol = n_items)
+  
+  user_bias <- result$par[(n_users*n_factors + n_items*n_factors + 1):
+                          (n_users*n_factors + n_items*n_factors + n_users)]
+  
+  item_bias <- result$par[(n_users*n_factors + n_items*n_factors + n_users + 1):
+                          length(result$par)]
+  
+  # Predicted ratings for RMSE
+  predicted <- user_factors %*% item_factors + 
+               outer(user_bias, rep(1, n_items)) + 
+               outer(rep(1, n_users), item_bias) + 
+               global_mean
+  
+  errors <- (user_item_matrix - predicted)^2
+  actual_rmse <- sqrt(mean(errors[!is.na(user_item_matrix)]))
+  
+  # Store names
+  rownames(user_factors) <- rownames(user_item_matrix)
+  colnames(item_factors) <- colnames(user_item_matrix)
+  names(user_bias) <- rownames(user_item_matrix)
+  names(item_bias) <- colnames(user_item_matrix)
+  
+  return(list(
+    user_factors = user_factors,
+    item_factors = item_factors,
+    user_bias = user_bias,
+    item_bias = item_bias,
+    global_mean = global_mean,
+    n_factors = n_factors,
+    convergence = result$convergence,
+    objective_value = result$value,
+    actual_rmse = actual_rmse,
+    user_ids = rownames(user_item_matrix),
+    item_ids = colnames(user_item_matrix)
+  ))
+}
+
+```
+
+
+```{r}
+# ---------------------------------------------------------------
+# 5. MAKE PREDICTIONS (FIXED)
+# ---------------------------------------------------------------
+
+predict_mf <- function(model, user_idx = NULL, item_idx = NULL) {
+  
+  if (is.null(user_idx) && is.null(item_idx)) {
+    
+    # Full prediction matrix
+    predicted <- model$user_factors %*% model$item_factors +
+      outer(model$user_bias, rep(1, length(model$item_bias))) +
+      outer(rep(1, length(model$user_bias)), model$item_bias) +
+      model$global_mean
+    
+    rownames(predicted) <- model$user_ids
+    colnames(predicted) <- model$item_ids
+    
+  } else {
+    # FIXED: Specific prediction - item_factors is n_factors x n_items
+    interaction <- sum(model$user_factors[user_idx, ] * 
+                       model$item_factors[, item_idx])
+    
+    predicted <- model$global_mean + model$user_bias[user_idx] +
+      model$item_bias[item_idx] + interaction
+  }
+  
+  predicted <- pmin(pmax(predicted, 1), 10)
+  
+  return(predicted)
+}
+
+```
+
+
+```{r}
+# ---------------------------------------------------------------
+# 6. RECOMMEND FOR USER
+# ---------------------------------------------------------------
+
+recommend_mf <- function(model, target_user, user_item_matrix,
+                         book_info, n_recommendations = 10) {
+  
+  target_user <- as.character(target_user)
+  
+  # Find user index
+  user_idx <- which(model$user_ids == target_user)
+  
+  if (length(user_idx) == 0) {
+    return(data.frame(ISBN = character(),
+                      Book.Title = character(),
+                      Book.Author = character(),
+                      Predicted_Rating = numeric()))
+  }
+  
+  # Find unrated items
+  unrated_indices <- which(is.na(user_item_matrix[target_user, ]))
+  
+  if (length(unrated_indices) == 0) {
+    return(data.frame(ISBN = character(),
+                      Book.Title = character(),
+                      Book.Author = character(),
+                      Predicted_Rating = numeric()))
+  }
+  
+  # Predict once for all items, filter unrated
+  all_predictions <- predict_mf(model)[user_idx, ]
+  predictions <- all_predictions[unrated_indices]
+  
+  # Top N recommendations
+  top_idx <- order(predictions, decreasing = TRUE)[1:min(n_recommendations, length(predictions))]
+  top_books <- predictions[top_idx]
+  
+  recommendations <- data.frame(
+    ISBN = names(top_books),
+    Predicted_Rating = as.numeric(top_books)) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
 }
 
 ```
 
 
 
-```{r}
-# Build similarity (centered)
-sim_obj_centered <- compute_item_similarity_centered(user_item_matrix)
 
-# Recommend for a sample user
-sample_user <- rownames(user_item_matrix)[13]
-cat("Top 10 normalized item-based CF recommendations for user", sample_user, ":\n")
-recs_norm <- predict_topN_item_based_centered(sample_user, user_item_matrix, sim_obj_centered, 
-                                              book_info, n_recommendations = 10, k = 10)
-print(recs_norm)
+```{r}
+# Assuming you have user_item_matrix and book_info loaded
+
+# Train the model
+mf_model <- train_mf_optim(
+  user_item_matrix = user_item_matrix,
+  n_factors = 10,
+  lambda = 0.02,
+  max_iterations = 50000,
+  seed = 123
+)
+
+# Check convergence
+cat("Convergence:", mf_model$convergence, "\n")
+cat("Training RMSE:", round(mf_model$actual_rmse, 4), "\n\n")
+
+# Get recommendations for existing user
+sample_user <- rownames(user_item_matrix)[1]
+recommendations <- recommend_mf(
+  model = mf_model,
+  target_user = sample_user,
+  user_item_matrix = user_item_matrix,
+  book_info = book_info,
+  n_recommendations = 10
+)
+
+print(recommendations)
+
+# Get specific prediction for one user-item pair
+user_idx <- 1
+item_idx <- 5
+single_pred <- predict_mf(mf_model, user_idx, item_idx)
+cat("\nPredicted rating:", round(single_pred, 2), "\n")
+```
+
+
+
+
+
+
+
+
+
+
+
+///
+
+
+
+```{r}
+
+# ---------------------------------------------------------------
+# 7. CROSS-VALIDATION FOR MATRIX FACTORIZATION
+# ---------------------------------------------------------------
+
+evaluate_mf_cv <- function(user_item_matrix,
+                           k_folds = 5,
+                           test_ratio = 0.2,
+                           n_factors = 10,
+                           lambda = 0.02,
+                           learning_rate = 0.005,
+                           n_epochs = 20,
+                           use_sgd = TRUE,
+                           seed = 123) {
+  
+  cat("\n========================================\n")
+  cat("CROSS-VALIDATION: MATRIX FACTORIZATION\n")
+  cat("========================================\n\n")
+  
+  # Create splits (assumes function from previous code)
+  cat("Creating", k_folds, "fold splits...\n")
+  splits <- create_k_fold_splits(user_item_matrix, k = k_folds,
+                                  test_ratio = test_ratio, seed = seed)
+  
+  mf_results <- list()
+  
+  for (fold in 1:k_folds) {
+    
+    cat("\n--- FOLD", fold, "---\n")
+    
+    train <- splits[[fold]]$train
+    test <- splits[[fold]]$test
+    
+    n_test <- sum(!is.na(test))
+    cat("Test set size:", n_test, "ratings\n\n")
+    
+    # Train model
+    if (use_sgd) {
+      cat("Training with SGD...\n")
+      model <- train_mf_sgd(
+        train,
+        n_factors = n_factors,
+        learning_rate = learning_rate,
+        lambda = lambda,
+        n_epochs = n_epochs
+      )
+    } else {
+      cat("Training with optim...\n")
+      model <- train_mf_optim(
+        train,
+        n_factors = n_factors,
+        lambda = lambda,
+        max_iterations = 10000
+      )
+    }
+    
+    # Generate predictions on test set
+    predictions <- predict_mf(model)
+    
+    # Calculate metrics
+    metrics <- calculate_metrics(predictions, test)
+    mf_results[[fold]] <- metrics
+    
+    cat("MF - RMSE:", round(metrics$RMSE, 4),
+        "| MAE:", round(metrics$MAE, 4),
+        "| Predictions:", metrics$n_predictions, "\n")
+  }
+  
+  # Aggregate results
+  cat("\n========================================\n")
+  cat("FINAL RESULTS\n")
+  cat("========================================\n\n")
+  
+  mf_rmse <- sapply(mf_results, function(x) x$RMSE)
+  mf_mae <- sapply(mf_results, function(x) x$MAE)
+  
+  results_summary <- data.frame(
+    Method = "Matrix Factorization",
+    RMSE_Mean = mean(mf_rmse, na.rm = TRUE),
+    RMSE_SD = sd(mf_rmse, na.rm = TRUE),
+    MAE_Mean = mean(mf_mae, na.rm = TRUE),
+    MAE_SD = sd(mf_mae, na.rm = TRUE)
+  )
+  
+  print(results_summary)
+  
+  return(list(
+    summary = results_summary,
+    fold_results = mf_results
+  ))
+}
+
+
+# ---------------------------------------------------------------
+# 8. USAGE EXAMPLES
+# ---------------------------------------------------------------
+
+
+model <- train_mf_optim(
+  user_item_matrix = user_item_matrix,
+  n_factors = 5,
+  lambda = 0.03,
+  max_iterations = 100000)
+
 
 ```
 
@@ -750,6 +1316,325 @@ print(recs_norm)
 
 
 
+/////
+
+```{r}
+library(recosystem)
+
+# ---------------------------------------------------------------
+# 7. PREPARE DATA FOR RECOSYSTEM
+# ---------------------------------------------------------------
+# PURPOSE: Convert user-item matrix to recosystem's required format
+# Needs: (user_index, item_index, rating) triplets
+
+prepare_recosystem_data <- function(user_item_matrix) {
+  
+  # Get all non-NA ratings with their positions
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  
+  # Create dataframe with integer indices and ratings
+  # recosystem requires 1-based integer indices
+  data_df <- data.frame(
+    user_index = observed[, 1],      # Row index (user)
+    item_index = observed[, 2],      # Column index (item)
+    rating = user_item_matrix[observed]  # Rating value
+  )
+  
+  # Store mappings for later
+  user_mapping <- data.frame(
+    user_index = 1:nrow(user_item_matrix),
+    user_id = rownames(user_item_matrix)
+  )
+  
+  item_mapping <- data.frame(
+    item_index = 1:ncol(user_item_matrix),
+    item_id = colnames(user_item_matrix)
+  )
+  
+  return(list(
+    data = data_df,
+    user_mapping = user_mapping,
+    item_mapping = item_mapping
+  ))
+}
+
+
+# ---------------------------------------------------------------
+# 8. TRAIN MODEL WITH RECOSYSTEM
+# ---------------------------------------------------------------
+# PURPOSE: Train matrix factorization model using optimized library
+
+train_recosystem <- function(user_item_matrix, 
+                              n_factors = 20,
+                              lambda = 0.1,
+                              learning_rate = 0.1,
+                              n_iter = 20) {
+  
+
+  
+  # Prepare data
+  prepared <- prepare_recosystem_data(user_item_matrix)
+  
+  # Create temporary files for recosystem
+  # recosystem reads/writes data from files for efficiency
+  train_file <- tempfile()
+  
+  # Write training data to file
+  write.table(prepared$data, file = train_file, 
+              sep = " ", row.names = FALSE, col.names = FALSE)
+  
+  # Create recosystem object
+  reco_obj <- Reco()
+  
+  # Create data source
+  train_set <- data_file(train_file)
+  
+  # Set tuning options
+  # These control the optimization process
+  opts <- list(
+    dim = n_factors,              # Number of latent factors
+    costp_l2 = lambda,            # L2 regularization for user factors
+    costq_l2 = lambda,            # L2 regularization for item factors
+    lrate = learning_rate,        # Learning rate
+    niter = n_iter,               # Number of iterations
+    nthread = 1)                  # Number of CPU threads
+
+  
+  
+  # Train the model
+  reco_obj$train(train_set, opts = opts)
+  
+  # Clean up temporary file
+  unlink(train_file)
+  
+  
+  # Return model and mappings
+  return(list(
+    model = reco_obj,
+    user_mapping = prepared$user_mapping,
+    item_mapping = prepared$item_mapping
+  ))
+}
+
+
+# ---------------------------------------------------------------
+# 9. RECOMMEND WITH RECOSYSTEM
+# ---------------------------------------------------------------
+# PURPOSE: Generate recommendations using trained recosystem model
+
+recommend_recosystem <- function(reco_model, target_user, 
+                                  user_item_matrix, book_info,
+                                  n_recommendations = 10) {
+  
+  target_user <- as.character(target_user)
+  
+  # Get user index
+  user_idx <- reco_model$user_mapping$user_index[
+    reco_model$user_mapping$user_id == target_user
+  ]
+  
+  if (length(user_idx) == 0) {
+    cat("User not found in training data\n")
+    return(data.frame())
+  }
+  
+  # Find unrated items
+  unrated_cols <- which(is.na(user_item_matrix[target_user, ]))
+  
+  if (length(unrated_cols) == 0) {
+    return(data.frame())
+  }
+  
+  # Create prediction data: (user_index, item_index) pairs
+  pred_data <- data.frame(
+    user_index = rep(user_idx, length(unrated_cols)),
+    item_index = unrated_cols
+  )
+  
+  # Write to temporary file
+  pred_file <- tempfile()
+  write.table(pred_data, file = pred_file, 
+              sep = " ", row.names = FALSE, col.names = FALSE)
+  
+  # Create prediction data source
+  pred_set <- data_file(pred_file)
+  
+  # Generate predictions
+  out_file <- tempfile()
+  reco_model$model$predict(pred_set, out_file = out_file)
+  
+  # Read predictions
+  predictions <- scan(out_file, quiet = TRUE)
+  
+  # Clean up
+  unlink(pred_file)
+  unlink(out_file)
+  
+  # Clip to valid range
+  predictions <- pmin(pmax(predictions, 1), 10)
+  
+  # Get ISBNs
+  item_ids <- colnames(user_item_matrix)[unrated_cols]
+  names(predictions) <- item_ids
+  
+  # Get top N
+  top_indices <- order(predictions, decreasing = TRUE)[1:min(n_recommendations, length(predictions))]
+  top_books <- predictions[top_indices]
+  
+  # Format recommendations
+  recommendations <- data.frame(
+    ISBN = names(top_books),
+    Predicted_Rating = as.numeric(top_books)
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+
+
+# ---------------------------------------------------------------
+# 10. NEW USER RECOMMENDATIONS WITH RECOSYSTEM
+# ---------------------------------------------------------------
+
+recommend_recosystem_new_user <- function(reco_model, new_user_ratings,
+                                           user_item_matrix, book_info,
+                                           n_recommendations = 10) {
+  
+  # Match ratings with training items
+  matched_books <- intersect(names(new_user_ratings), 
+                             reco_model$item_mapping$item_id)
+  
+  if (length(matched_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Get item indices
+  item_indices <- reco_model$item_mapping$item_index[
+    match(matched_books, reco_model$item_mapping$item_id)
+  ]
+  
+  # Create training data for new user
+  # Assign new user a temporary index
+  new_user_idx <- max(reco_model$user_mapping$user_index) + 1
+  
+  new_user_data <- data.frame(
+    user_index = rep(new_user_idx, length(matched_books)),
+    item_index = item_indices,
+    rating = new_user_ratings[matched_books]
+  )
+  
+  # Train on new user's data (incremental learning)
+  train_file <- tempfile()
+  write.table(new_user_data, file = train_file,
+              sep = " ", row.names = FALSE, col.names = FALSE)
+  
+  train_set <- data_file(train_file)
+  
+  # Quick training (fewer iterations for new user)
+  opts <- list(
+    dim = reco_model$model$._get_field("opts_dim"),
+    niter = 10,
+    nthread = 1)
+  
+  # Create new model object for this user
+  new_reco <- Reco()
+  new_reco$train(train_set, opts = opts)
+  
+  unlink(train_file)
+  
+  # Find unrated items
+  all_items <- reco_model$item_mapping$item_id
+  unrated_items <- setdiff(all_items, matched_books)
+  
+  if (length(unrated_items) == 0) {
+    return(data.frame())
+  }
+  
+  # Get unrated item indices
+  unrated_indices <- reco_model$item_mapping$item_index[
+    match(unrated_items, reco_model$item_mapping$item_id)
+  ]
+  
+  # Create prediction data
+  pred_data <- data.frame(
+    user_index = rep(new_user_idx, length(unrated_indices)),
+    item_index = unrated_indices
+  )
+  
+  pred_file <- tempfile()
+  write.table(pred_data, file = pred_file,
+              sep = " ", row.names = FALSE, col.names = FALSE)
+  
+  pred_set <- data_file(pred_file)
+  out_file <- tempfile()
+  
+  new_reco$predict(pred_set, out_file = out_file)
+  predictions <- scan(out_file, quiet = TRUE)
+  
+  unlink(pred_file)
+  unlink(out_file)
+  
+  predictions <- pmin(pmax(predictions, 1), 10)
+  names(predictions) <- unrated_items
+  
+  # Get top N
+  top_indices <- order(predictions, decreasing = TRUE)[1:min(n_recommendations, length(predictions))]
+  top_books <- predictions[top_indices]
+  
+  recommendations <- data.frame(
+    ISBN = names(top_books),
+    Predicted_Rating = as.numeric(top_books)
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+
+
+# ---------------------------------------------------------------
+# 11. USAGE EXAMPLE - RECOSYSTEM
+# ---------------------------------------------------------------
+
+cat("\n\n=== EXAMPLE: RECOSYSTEM MATRIX FACTORIZATION ===\n")
+
+# Train model with recosystem
+reco_model <- train_recosystem(
+  user_item_matrix = user_item_matrix,
+  n_factors = 20,
+  lambda = 0.1,
+  learning_rate = 0.1,
+  n_iter = 20)
+
+# Recommend for existing user
+sample_user <- rownames(user_item_matrix)[1]
+reco_recs <- recommend_recosystem(
+  reco_model = reco_model,
+  target_user = sample_user,
+  user_item_matrix = user_item_matrix,
+  book_info = book_info,
+  n_recommendations = 10
+)
+
+cat("Recommendations for existing user:\n")
+print(reco_recs)
+
+# Recommend for new user
+sample_books <- colnames(user_item_matrix)[1:5]
+new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
+
+new_user_reco_recs <- recommend_recosystem_new_user(
+  reco_model = reco_model,
+  new_user_ratings = new_user_ratings,
+  user_item_matrix = user_item_matrix,
+  book_info = book_info,
+  n_recommendations = 10
+)
+
+cat("\nRecommendations for new user:\n")
+print(new_user_reco_recs)
+```
 
 
 
