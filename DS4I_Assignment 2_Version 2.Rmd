@@ -940,6 +940,282 @@ library(recosystem)
 ```
 
 
+
+```{r}
+# ================================================================
+# MATRIX FACTORIZATION USING RECOSYSTEM PACKAGE
+# Following Lecture Notes Workflow
+# ================================================================
+
+library(recosystem)
+library(dplyr)
+
+# ---------------------------------------------------------------
+# 1. PREPARE DATA IN RECOSYSTEM FORMAT
+# ---------------------------------------------------------------
+
+prepare_recosystem_data <- function(user_item_matrix) {
+  
+  # Convert matrix to long format with observed ratings only
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  
+  # recosystem expects 0-based or 1-based integer indices
+  # Let's use 0-based (subtract 1 from R's 1-based indices)
+  train_data <- data.frame(
+    user_index = observed[, 1] - 1,
+    item_index = observed[, 2] - 1,
+    rating = user_item_matrix[observed]
+  )
+  
+  # Store ID mappings for later
+  user_ids <- data.frame(
+    user_index = 0:(nrow(user_item_matrix) - 1),
+    user_id = rownames(user_item_matrix)
+  )
+  
+  item_ids <- data.frame(
+    item_index = 0:(ncol(user_item_matrix) - 1),
+    item_id = colnames(user_item_matrix)
+  )
+  
+  return(list(
+    train_data = train_data,
+    user_ids = user_ids,
+    item_ids = item_ids
+  ))
+}
+
+
+# ---------------------------------------------------------------
+# 2. SPLIT INTO TRAIN AND TEST SETS
+# ---------------------------------------------------------------
+
+create_train_test_split_reco <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
+  
+  set.seed(seed)
+  
+  # Get observed ratings
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
+  
+  # Randomly sample test indices
+  test_indices <- sample(1:n_ratings, size = floor(n_ratings * test_ratio))
+  
+  # Split data
+  test_obs <- observed[test_indices, , drop = FALSE]
+  train_obs <- observed[-test_indices, , drop = FALSE]
+  
+  # Create train and test dataframes (0-based indexing)
+  train_data <- data.frame(
+    user_index = train_obs[, 1] - 1,
+    item_index = train_obs[, 2] - 1,
+    rating = user_item_matrix[train_obs]
+  )
+  
+  test_data <- data.frame(
+    user_index = test_obs[, 1] - 1,
+    item_index = test_obs[, 2] - 1,
+    rating = user_item_matrix[test_obs]
+  )
+  
+  return(list(train = train_data, test = test_data))
+}
+
+
+# ---------------------------------------------------------------
+# 3. TRAIN MODEL (SINGLE TRAINING)
+# ---------------------------------------------------------------
+
+train_reco_model <- function(train_data, 
+                             n_factors = 10,
+                             learning_rate = 0.1,
+                             costp_l2 = 0.01,
+                             costq_l2 = 0.01,
+                             n_iter = 50,
+                             verbose = TRUE) {
+  
+  # Write training data to temp file
+  train_file <- tempfile()
+  write.table(train_data, file = train_file, 
+              sep = " ", row.names = FALSE, col.names = FALSE)
+  
+  # Create data source
+  train_set <- data_memory(
+    user_index = train_data$user_index,
+    item_index = train_data$item_index,
+    rating = train_data$rating,
+    index1 = TRUE  # Indicate we're using 0-based indexing
+  )
+  
+  # Create model object
+  rs <- Reco()
+  
+  # Train with specified hyperparameters
+  rs$train(train_set, opts = list(
+    dim = n_factors,           # number of latent factors
+    lrate = learning_rate,     # learning rate
+    costp_l2 = costp_l2,      # L2 reg for user factors
+    costq_l2 = costq_l2,      # L2 reg for item factors
+    niter = n_iter,           # number of iterations
+    verbose = verbose
+  ))
+  
+  unlink(train_file)
+  
+  return(rs)
+}
+
+
+# ---------------------------------------------------------------
+# 4. TUNE HYPERPARAMETERS
+# ---------------------------------------------------------------
+
+tune_reco_model <- function(train_data,
+                            n_factors = c(10, 25, 50),
+                            learning_rate = c(0.1, 0.01),
+                            n_iter = 20,
+                            verbose = TRUE) {
+  
+  # Create data source
+  train_set <- data_memory(
+    user_index = train_data$user_index,
+    item_index = train_data$item_index,
+    rating = train_data$rating,
+    index1 = TRUE
+  )
+  
+  # Create model
+  rs <- Reco()
+  
+  # Tune hyperparameters
+  opts <- rs$tune(train_set, opts = list(
+    dim = n_factors,
+    lrate = learning_rate,
+    costp_l2 = c(0.01, 0.1),
+    costq_l2 = c(0.01, 0.1),
+    niter = n_iter,
+    nthread = 4,
+    verbose = verbose
+  ))
+  
+  return(opts)
+}
+
+
+# ---------------------------------------------------------------
+# 5. MAKE PREDICTIONS AND EVALUATE
+# ---------------------------------------------------------------
+
+predict_and_evaluate <- function(model, test_data) {
+  
+  # Create test data source
+  test_set <- data_memory(
+    user_index = test_data$user_index,
+    item_index = test_data$item_index,
+    rating = test_data$rating,
+    index1 = TRUE
+  )
+  
+  # Generate predictions
+  predictions <- model$predict(test_set, out_memory())
+  
+  # Calculate RMSE
+  rmse <- sqrt(mean((predictions - test_data$rating)^2))
+  
+  # Create results dataframe
+  results <- test_data %>%
+    mutate(
+      predicted_rating = predictions,
+      improved_rating = case_when(
+        predictions < 1 ~ 1,
+        predictions > 10 ~ 10,
+        TRUE ~ predictions
+      )
+    )
+  
+  # Calculate improved RMSE
+  improved_rmse <- sqrt(mean((results$improved_rating - results$rating)^2))
+  
+  return(list(
+    predictions = results,
+    rmse = rmse,
+    improved_rmse = improved_rmse
+  ))
+}
+
+
+# ---------------------------------------------------------------
+# 6. COMPLETE WORKFLOW EXAMPLE (MATCHING LECTURE NOTES)
+# ---------------------------------------------------------------
+
+cat("\n=== STEP 1: Prepare Data ===\n")
+prepared <- prepare_recosystem_data(user_item_matrix)
+
+cat("\n=== STEP 2: Create Train/Test Split ===\n")
+split <- create_train_test_split_reco(user_item_matrix, test_ratio = 0.2, seed = 123)
+cat("Training set:", nrow(split$train), "ratings\n")
+cat("Test set:", nrow(split$test), "ratings\n")
+
+cat("\n=== STEP 3: Train Model with Fixed Hyperparameters ===\n")
+model <- train_reco_model(
+  train_data = split$train,
+  n_factors = 10,
+  learning_rate = 0.1,
+  costp_l2 = 0.01,
+  costq_l2 = 0.01,
+  n_iter = 50,
+  verbose = TRUE
+)
+
+cat("\n=== STEP 4: Make Predictions on Test Set ===\n")
+results <- predict_and_evaluate(model, split$test)
+cat("RMSE:", round(results$rmse, 4), "\n")
+cat("Improved RMSE (clipped):", round(results$improved_rmse, 4), "\n")
+
+# Display sample predictions
+cat("\nSample predictions:\n")
+print(head(results$predictions, 10))
+
+
+cat("\n\n=== STEP 5 (OPTIONAL): Tune Hyperparameters ===\n")
+# opts <- tune_reco_model(
+#   train_data = split$train,
+#   n_factors = c(10, 25, 50),
+#   learning_rate = c(0.1, 0.01),
+#   n_iter = 20,
+#   verbose = TRUE
+# )
+# 
+# cat("\nOptimal parameters:\n")
+# print(opts$min)
+# 
+# cat("\n=== STEP 6: Retrain with Optimal Parameters ===\n")
+# model_optimal <- train_reco_model(
+#   train_data = split$train,
+#   n_factors = opts$min$dim,
+#   learning_rate = opts$min$lrate,
+#   costp_l2 = opts$min$costp_l2,
+#   costq_l2 = opts$min$costq_l2,
+#   n_iter = 50,
+#   verbose = TRUE
+# )
+# 
+# results_optimal <- predict_and_evaluate(model_optimal, split$test)
+# cat("Optimal RMSE:", round(results_optimal$rmse, 4), "\n")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+//////////
 ```{r}
 # ---------------------------------------------------------------
 # 1. EVALUATION FUNCTION WITH L2 REGULARIZATION AND BIAS
