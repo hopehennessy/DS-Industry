@@ -1,0 +1,111 @@
+---
+title: "LLM task"
+format: 
+  html:
+    embed-resources: true
+    page-layout: full
+    toc: true
+---
+
+In this exercise you will explore large language models (LLMs) in three complementary ways after studying *llm_intro.qmd*.
+
+In Part A you will use any provider’s web console to iterate on prompts and observe strengths/weaknesses.  
+In Part B you will make a call to an LLM from within an R function, demonstrating programmatic LLM use.
+Part C asks you to familiarise yourself with some examples of bias and discrimination in generative AI.
+
+## Prerequisites (for Part B only)
+
+- **Sign up** for a free [Mistral AI account](https://console.mistral.ai)  
+- In the **Mistral Console**, create an **API key**  
+- Copy the key (looks like: `mistral-xxxxxxxx...`)  
+- Add to your `.Renviron` file with 
+```
+usethis::edit_r_environ()
+```
+then
+```
+MISTRAL_API_KEY=your_api_key_here
+```
+
+## Part A — Console exploration
+
+Goal: gain intuition for prompting. Pick a task relevant to you (e.g., summarise a short article; extract a table from a paragraph; draft a short email; write a tiny code snippet). Use an area you know well, so you can judge the output.
+
+### A1. Define success 
+
+- Decide on a one sentence objective (what should the output look like?).
+- Choose constraints: length, tone, format (e.g., 3 bullets ≤12 words each).
+
+### A2. Baseline prompt
+
+- Paste a minimal prompt and capture the output.
+
+### A3. Improve with structure
+
+- Add headings, bullet lists, and delimiters to separate data from instructions.
+- Add 1–2 examples (few-shot) showing desired input and output.
+
+### A4. Stress-test & refine
+
+- Provide examples (positive and negative)
+- Ask follow-ups to clarify ambiguities.
+- Request a revised answer with the new constraints/examples.
+
+### A5. Reflection
+
+- What improved the most? what still failed? what would you try next?
+
+## Part B — Programmatic LLM use
+
+Goal: demonstrate simple programmatic use of an LLM
+
+### B1. Input data
+
+```r
+load("data/my_imdb_reviews.RData)
+reviews <- as.character(reviews$review)
+reviews <- sample(reviews, 30)
+```
+
+### B2. Write function
+
+```r
+library(ellmer)
+
+# Create a conversation with Mistral (choose an available model)
+chat <- chat_mistral(model = "mistral-small-latest")
+
+# Summarise a review in exactly 3 short bullets (no parsing needed)
+summarise_review <- function(txt, tone = c("neutral","friendly","formal")[1]) {
+  prompt <- paste0(
+    "This is a movie review of either Taxi Driver or Waterworld. \n",
+    "Summarise the product review in EXACTLY 3 bullets.\n",
+    "Each bullet <= 10 words, written in a ", tone, " tone.\n",
+    "Focus on what mattered to the reviewer \n\n",
+    "Review:\n", txt
+  )
+  chat$chat(prompt)
+}
+```
+
+### B3. Run
+
+```r
+# Read a review
+reviews[1]
+
+# Summarize review
+summarise_review(reviews[1], tone = "neutral")
+summarise_review(reviews[1], tone = "friendly")
+summarise_review(reviews[1], tone = "formal")
+```
+
+### B4. Experiment
+
+1. Try different reviews.
+2. Run multiple times on the same review, check consistency.
+3. Vary parameters of the function (e.g. number of bullet points, length, tone)
+
+## Part C — Explore bias
+
+Explore some of the documented examples of gender and racial bias in generative AI (for example, by asking an LLM for these).

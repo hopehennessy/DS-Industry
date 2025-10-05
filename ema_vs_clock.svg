@@ -1,0 +1,27 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" width="980" height="360" viewBox="0 0 980 360">
+  <defs>
+    <style>
+      text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; font-size: 16px; fill: #111 }
+    </style>
+  </defs>
+  <!-- EMA panel -->
+  <rect x="40" y="40" width="420" height="280" fill="none" stroke="#333" />
+  <text x="250" y="28" text-anchor="middle">EMA (lags spikes)</text>
+  <line x1="70" y1="300" x2="430" y2="300" stroke="#ccc" />
+  <line x1="70" y1="80" x2="70" y2="300" stroke="#ccc" />
+  <!-- spikes at ~t=4,8 -->
+  <line x1="150" y1="120" x2="150" y2="300" stroke="#999" />
+  <line x1="300" y1="120" x2="300" y2="300" stroke="#999" />
+  <!-- ema curve -->
+  <polyline fill="none" stroke="#1976d2" stroke-width="2" points="70,300 110,300 150,200 190,230 230,255 260,270 300,195 330,230 360,255 395,275 430,285" />
+  <!-- Clock panel -->
+  <rect x="520" y="40" width="420" height="280" fill="none" stroke="#333" />
+  <text x="730" y="28" text-anchor="middle">Clock (anticipates)</text>
+  <line x1="550" y1="300" x2="910" y2="300" stroke="#ccc" />
+  <line x1="550" y1="80" x2="550" y2="300" stroke="#ccc" />
+  <!-- spikes at ~t=4,8 -->
+  <line x1="630" y1="120" x2="630" y2="300" stroke="#999" />
+  <line x1="780" y1="120" x2="780" y2="300" stroke="#999" />
+  <!-- anticipatory peaks just before spikes -->
+  <polyline fill="none" stroke="#d32f2f" stroke-width="2" points="550,300 585,300 600,140 615,300 655,300 690,300 720,300 740,140 755,300 790,300 820,300 850,300 875,300 910,300" />
+</svg>

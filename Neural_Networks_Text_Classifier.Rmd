@@ -1,0 +1,759 @@
+---
+title: 'Neural Networks: Text classifier'
+author: "Hope Hennessy"
+date: "2025-09-25"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE)
+```
+
+Previously we built a classification tree using bag-of-words features to predict whether a tweet made by Donald Trump was made before or after he became president. 
+
+Here we look at a series of notebooks that build different kinds of neural networks to do the same thing. 
+
+In this first notebook, we build a standard feedforward network (a multilayer perceptron) that uses bag-of-words features. The input data is the same as the classification tree we built previously; only the classification approach changes.
+
+
+# Multilayer perceptron with bag-of-words features
+
+```{r, message=FALSE}
+library(readr)
+library(stringr)
+library(lubridate)
+library(tidytext)
+library(keras)
+use_virtualenv("myenv", required = TRUE) 
+
+load("processed_trump_tweets.Rdata")
+```
+
+The following objects are saved in `processed_trump_tweets.Rdata`:
+
+- `tweets_sample` (4000x11): data frame containing the actual text used in 4000 tweets (column `text`), response (column `is_potus`), and additional variables. There are 2000 tweets made before, and 2000 tweets made during, Trump's presidency.
+- `seq_ok` (4000x1): a logical variable indicating whether each tweet in `tweets_sample` contains more than 5 tokens after tokenization. Tweets with `seq_id == TRUE` are retained, else discarded.
+- `all_ids` (3438x1): contains an identifier (`id_str`) for all retained tweets (all tweets where `seq_id == TRUE`).
+- `bag_of_words` (3438x203): a wide-format data frame containing, for all retained tweets (>5 tokens), bag-of-words features (frequency counts) for the 201 most commonly used words, plus columns for tweet id (`id_str`) and response (`is_potus`). 
+- `training_ids` (2406x1): `id_str` for all tweets that should be used for training.
+- `test_ids` (1032x1): `id_str` for all tweets that should be used for testing
+- `test_tweets_bag` (1032x202): format as for `bag_of_words` except the `id_str` column has been removed. Contains tweets that should be considered part of the test dataset.
+- `test_tweets_txt` (1032x10): data frame containing the actual text used in test tweets (column `text`), response (column `is_potus`), and additional variables.
+- `train_tweets_bag` (2406x202): format as for `test_tweets_bag` except these tweets should be considered part of the training dataset.
+- `train_tweets_txt` (2406x10): as for `text_tweets_txt`, but for training tweets.
+
+We restrict our models to longer tweets that have no fewer than 5 tokens (after the tokenization described in the next notebook). This part isn't needed for all of the models we look at, but we want to treat all models the same for comparative purposes, so we apply this step to all models.
+
+```{r}
+tweets_sample_valid <- tweets_sample[seq_ok, ]
+```
+
+We then split up the training and test set.
+
+```{r}
+training_rows <- which(tweets_sample_valid$id_str %in% training_ids$id_str)
+
+# Converting bag-of-words features into numeric matrices
+train <- list()
+test <- list()
+train$x <- as.matrix(bag_of_words[training_rows,-c(1,2)])
+test$x <-  as.matrix(bag_of_words[-training_rows,-c(1,2)])
+
+train$y <- as.integer(bag_of_words$is_potus[training_rows])
+test$y <-  as.integer(bag_of_words$is_potus[-training_rows])
+```
+
+The neural network is created by stacking layers. Here this needs three main decisions, given below with the way we're doing it in italics.
+
+-   How to represent the text? *bag-of-words features*
+-   How many layers to use in the model? *one dense layer below, but feel free to experiment*
+-   How many *hidden units* to use for each layer? *32 used below, but feel free to experiment*
+
+The labels to predict are either 0 (tweet made before presidency) or 1 (tweet made during presidency).
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_dense(units = 32, input_shape = c(201), activation = "relu") %>%
+  layer_dense(units = 1, activation = "sigmoid")
+
+summary(model)
+```
+
+* First dense layer: 32 hidden units, ReLU activation, input shape = 201 features (bag-of-words size).
+* Output layer: 1 unit with sigmoid activation for binary classification.
+
+Compile the model:
+
+```{r}
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy")
+```
+
+* Specifies binary cross-entropy as the loss function for two-class classification.
+* Uses the Adam optimizer for efficient training.
+* Tracks accuracy as a performance metric.
+
+Train the model:
+
+```{r}
+history <- model %>% fit(train$x, train$y, epochs = 50, batch_size = 128, verbose = 0) 
+plot(history)
+```
+
+And evaluate it's performance on the test set:
+
+```{r}
+results <- model %>% evaluate(test$x, test$y, batch_size=128, verbose = 2)
+results
+```
+
+
+
+# Multilayer perceptron with word embeddings
+
+* Builds a multilayer perceptron to predict if a Trump tweet was made before or after his presidency.
+* Unlike the previous model, it uses the raw tweet text directly instead of pre-computed bag-of-words features.
+* Introduces the concept of word embeddings, which represent words as dense numeric vectors to capture their meaning and relationships.
+
+Here we use Keras to tokenize the tweets.
+
+* Tokenization process: Keras breaks each tweet into individual words (tokens) and assigns each unique word a unique integer ID.
+* The result is that every tweet is represented as a sequence of integers, where each integer corresponds to a specific word in the tokenizer’s vocabulary.
+* This numeric representation allows the neural network to process textual data, since models cannot directly work with raw text.
+* By default, the tokenizer splits text at the word level, but you can customize it to tokenize at other levels (e.g., characters or subwords) by adjusting its parameters.
+* You can explore all available options and settings for tokenization using ?text_tokenizer in R, such as setting vocabulary size limits or handling rare words.
+
+```{r}
+max_features <- 1000 # choose max_features most popular words
+tokenizer = text_tokenizer(num_words = max_features) 
+fit_text_tokenizer(tokenizer, tweets_sample$text)
+```
+
+* Creates a Keras tokenizer object that will map words to integer IDs based on their frequency.
+* Fits the tokenizer to the tweet text data so it learns the vocabulary and assigns integer indices to each unique word.
+
+```{r}
+tweets_sample$text[1] # view the first tweet
+tts <- texts_to_sequences(tokenizer, tweets_sample$text[1]) # tokenize the tweet
+```
+
+* Converts the first tweet into a sequence of integers, where each integer represents a word in the tokenizer's vocabulary.
+* The output is a list containing the sequence of integers for that tweet.
+
+```{r}
+tokenizer$word_index[tts[[1]]] # translates the integers back into their corresponding words.
+```
+
+```{r}
+sequences = tokenizer$texts_to_sequences(tweets_sample$text) # tokanize all tweets
+```
+
+In later models we need to remove tweets with just a single word, or we get an error. So here we'll do the same, just to keep the datasets comparable between models. I also throw out very short tweets (less than 5 words), but this is not strictly needed.
+
+```{r}
+y <- as.integer(tweets_sample$is_potus[seq_ok])
+sequences <- sequences[which(seq_ok)]
+tweets_sample_valid <- tweets_sample[seq_ok, ]
+```
+
+We then split up the training and test set.
+
+```{r}
+training_rows <- which(tweets_sample_valid$id_str %in% training_ids$id_str)
+
+train <- list()
+test <- list()
+train$x <- sequences[training_rows]
+test$x <-  sequences[-training_rows]
+
+train$y <- y[training_rows]
+test$y <-  y[-training_rows]
+```
+
+MLPs require inputs to be the same size -- so sequences must be the same length. Currently this isn't the case -- sequences are of different lengths. So we "pad" the shorter sequences with zeros so that all padded sequences are the same length. We also need to set a maximum allowed sequence length, otherwise if there are just one or two much longer sentences we end up with a lot of wasteful padding. Let's see how long each of the tokenized tweets are:
+
+```{r}
+hist(unlist(lapply(sequences, length)), main = "Sequence length after tokenization")
+```
+
+* Calculates the length of each tweet after tokenization.
+* Plots a histogram to visualize the distribution of tweet lengths.
+* Helps decide on an appropriate maximum sequence length for padding.
+
+A maximum length around 30 seems reasonable. Now pad the sequences:
+
+```{r}
+maxlen <- 32               
+x_train <- train$x %>% pad_sequences(maxlen = maxlen)
+x_test <- test$x %>% pad_sequences(maxlen = maxlen)
+```
+
+* Neural networks require inputs of the same size, but tweets have different lengths.
+* Uses pad_sequences() to add zeros to the beginning of shorter tweets until each tweet has exactly maxlen = 32 words.
+* Ensures consistent input dimensions for the model.
+
+We can now define the model, using an embedding dimension of 10 (a vector of length 10 is used to represent each word).
+
+```{r}
+model <- keras_model_sequential() %>% 
+  layer_embedding(max_features, output_dim = 10, input_length = maxlen) %>%
+  layer_dropout(0.2) %>%
+  layer_flatten() %>%
+  layer_dense(32, activation = "relu") %>%
+  layer_dense(1, activation = "sigmoid")
+
+summary(model)
+```
+
+
+* Embedding layer:
+    * Maps each integer (word) to a dense vector of length 10 (output_dim = 10).
+    * Learns meaningful word representations during training.
+* Dropout layer: Prevents overfitting by randomly dropping 20% of units during training.
+* Flatten layer: Converts the 2D embedding output into a single vector.
+* Dense hidden layer: 32 neurons with ReLU activation for non-linearity.
+* Output layer: 1 neuron with sigmoid activation for binary classification (before vs during presidency).
+
+
+
+
+
+* Neural networks need numbers:
+    * Neural networks perform mathematical operations like addition, multiplication, and matrix transformations.
+    * Because of this, their inputs must be numeric values, not text, images, or other raw data types.
+* Challenge with text data:
+    * Words are discrete symbols, not numbers, so they cannot be processed directly by a neural network.
+    * E.g. the words “president” and “tweet” have no inherent numeric meaning.
+* Solution – numeric vector representations:
+     * Each unique word (or other categorical entity like a user or movie) is assigned a numeric vector.
+    * These vectors are learnable parameters that the model adjusts during training to capture useful patterns.
+    * Example:
+        * “president” $\to$ [0.25, -0.18, 0.43, ...]
+        * “tweet” $\to$ [0.09, 0.52, -0.33, ...]
+* What embeddings are:
+    * An embedding is a function that maps a discrete unit (e.g., a word) to a dense, high-dimensional vector.
+    * These vectors capture semantic relationships between words, so similar words have similar representations.
+    * E.g. vectors for “king” and “queen” may be close together in the embedding space.
+* How embeddings work internally:
+    * The embedding layer can be thought of as a lookup table, implemented as a matrix:
+        * Rows = unique words in the vocabulary.
+        * Columns = vector dimensions (features for each word).
+    * When a word appears in a tweet, its corresponding row vector is retrieved and passed into the network.
+* Why this is powerful:
+    * Instead of manually defining meaning, the neural network learns embeddings automatically based on the task.
+    * This allows the model to detect patterns such as sentiment, context, or stylistic differences between tweets.
+    * The same concept applies beyond words — embeddings are also used for users, products, movies, etc., in recommendation systems.
+
+We can now compile the model:
+
+```{r}
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy")
+```
+
+* Loss function: Binary cross-entropy, ideal for binary classification tasks.
+* Optimizer: Adam, for efficient and adaptive learning.
+* Tracks accuracy during training and evaluation.
+
+Train the model:
+
+```{r}
+history <- model %>%
+  fit(x_train, train$y,batch_size = 64, epochs = 10, verbose = 0)
+plot(history) # visualize loss and accuracy over epochs
+```
+
+And evaluate the model on the test set:
+
+```{r}
+results <- model %>% evaluate(x_test, test$y, batch_size = 64, verbose = 2)
+```
+
+
+Summary of workflow
+
+1. Tokenize tweets $\to$ convert words to integers.
+2. Filter short tweets $\to$ split into training and test sets.
+3. Pad sequences so all inputs have uniform length.
+4. Build a neural network using word embeddings to represent words.
+5. Train, visualize progress, and evaluate performance on unseen data.
+
+
+In this project:
+
+* Each tweet is converted into a sequence of word indices: "Trump wins election" $\to$ [1, 2, 3]
+* The **embedding layer** in Keras looks up each word's vector from the embedding matrix.
+* These vectors are **updated during training** to improve the model's ability to distinguish between tweets made before or during Trump's presidency.
+* By the end, the embeddings capture meaningful information about the **context and relationships** of words in Trump's tweets.
+
+
+
+## Word Embedding Note
+
+### The problem with text data:
+
+Neural networks require **numeric input**, but words are **discrete symbols** like "Trump" or "tweet".
+
+A simple way to convert words to numbers is **one-hot encoding**, where each word gets a unique binary vector. 
+    * E.g. with 5 words: "Trump" $\to$ [1, 0, 0, 0, 0], "tweet" $\to$ [0, 1, 0, 0, 0].
+    * Drawbacks of one-hot encoding:
+        - Vectors are very sparse (mostly zeros).
+        - No sense of similarity between words — "president" and "leader" are just as different as "president" and "banana".
+        - Leads to high memory usage and inefficient learning.
+
+### Solution: Word Embeddings
+
+- Word embeddings map each word to a **dense, low-dimensional vector** of continuous numbers, like [0.2, -0.5, 0.8, ...].
+- These vectors are learned automatically by the neural network during training.
+- Words with **similar meanings** end up having **similar vectors**, capturing semantic relationships.
+
+How embeddings work internally:
+
+1. Imagine a matrix with:
+   - Rows: one for each word in the vocabulary.
+   - Columns: represent the embedding dimensions (features).
+2. When a tweet is processed, each word is used to lookup its corresponding row in the matrix.
+3. These vectors are then passed to the next layer of the network.
+4. During backpropagation, the network updates the embedding values, learning which word features are useful for the task.
+
+## Example
+
+Suppose we have the following three tweets:
+
+- Tweet 1: "Trump wins election"
+- Tweet 2: "Biden wins election"
+- Tweet 3: "Trump tweets again"
+
+### 1. Vocabulary creation:
+
+Unique words = ["Trump", "wins", "election", "Biden", "tweets", "again"]
+
+### 2. Initial random embeddings:
+
+Let's say we use an embedding dimension of 3.
+
+Initially, the embedding matrix might look like this:
+
+```{r}
+Trump     [ 0.12, -0.33,  0.45 ]
+wins      [ 0.05,  0.27, -0.14 ]
+election  [-0.41,  0.09,  0.20 ]
+Biden     [ 0.22, -0.15,  0.49 ]
+tweets    [ 0.01,  0.32, -0.37 ]
+again     [-0.28, -0.07,  0.18 ]
+```
+
+### 3. Training process:
+
+The network tries to predict whether a tweet was made before or after Trump's presidency.
+
+During training, backpropagation adjusts the values in this matrix so that meaningful relationships are captured:
+
+- "Trump" and "Biden" might end up close together because both are political figures.
+- "wins" and "election" may also cluster together.
+
+### 4. Learned semantic meaning:
+
+After training, the vectors could look like:
+
+```{r}
+Trump     [ 0.80, -0.50,  0.40 ]
+Biden     [ 0.79, -0.52,  0.39 ]
+wins      [-0.10,  0.70, -0.20 ]
+election  [-0.12,  0.69, -0.18 ]
+tweets    [ 0.40,  0.10, -0.60 ]
+again     [ 0.39,  0.08, -0.59 ]
+```
+
+Notice how:
+
+- "Trump" and "Biden" now have very similar vectors $\to$ the model has learned they are related.
+- "wins" and "election" are also close together, showing a learned association.
+
+### Why embeddings are powerful
+
+* Captures semantic relationships:
+    - E.g. vector("king") - vector("man") + vector("woman") $\approx$ vector("queen").
+    - This shows embeddings can model analogies and relationships between words.
+* Efficient representation:
+    - A vocabulary of 10,000 words represented in a 100-dimensional embedding space uses far less memory than a 10,000-length one-hot vector.
+* Generalizable knowledge:
+    - Pre-trained embeddings (like Word2Vec or GloVe) can be used in new tasks, transferring learned word relationships to different models.
+
+
+
+
+# 1D CNN trained from scratch
+
+* This notebook continues using word embeddings as input features, similar to the previous notebook.
+* The main change is in the neural network architecture, which is now a 1-Dimensional Convolutional Neural Network (1D CNN).
+* A 1D CNN can capture relationships and patterns between neighboring words, such as common phrases or word sequences.
+* The earlier steps, like loading data, tokenizing text, and creating embeddings, remain mostly the same as before and are only briefly covered here.
+* The focus of this notebook is on building and training the CNN model for tweet classification.
+
+Tokenize the tweets:
+
+```{r}
+max_features <- 1000        # choose max_features most popular words
+tokenizer = text_tokenizer(num_words = max_features)
+fit_text_tokenizer(tokenizer, tweets_sample$text)
+sequences = tokenizer$texts_to_sequences(tweets_sample$text)
+```
+
+Remove tweets with less than 5 words:
+
+```{r}
+y <- as.integer(tweets_sample$is_potus[seq_ok])
+sequences <- sequences[which(seq_ok)]
+tweets_sample_valid <- tweets_sample[seq_ok, ]
+```
+
+Split up the training and test set:
+
+```{r}
+training_rows <- which(tweets_sample_valid$id_str %in% training_ids$id_str)
+
+train <- list()
+test <- list()
+train$x <- sequences[training_rows]
+test$x <-  sequences[-training_rows]
+
+train$y <- y[training_rows]
+test$y <-  y[-training_rows]
+```
+
+Pad the sequences:
+
+```{r}
+maxlen <- 32               
+x_train <- train$x %>% pad_sequences(maxlen = maxlen)
+x_test <- test$x %>% pad_sequences(maxlen = maxlen)
+```
+
+We can now define the model, again using 10 embedding dimensions.
+
+```{r}
+embedding_dims <- 10
+model <- keras_model_sequential() %>% 
+  layer_embedding(max_features, output_dim = embedding_dims, input_length = maxlen) %>%
+  layer_dropout(0.2) %>%
+  layer_conv_1d(filters = 64, kernel_size = 8, activation = "relu") %>%
+  layer_max_pooling_1d(pool_size = 2) %>%
+  layer_flatten() %>%
+  layer_dense(32, activation = "relu") %>%
+  layer_dense(1, activation = "sigmoid")
+
+summary(model)
+```
+
+
+* MLP model:
+    * layer_flatten() $\to$ flattens the embedding output directly into a 1D vector.
+    * No understanding of local word patterns.
+    * No pooling layer is used $\to$ every feature from the embeddings is passed directly into the dense layers.
+* CNN model:
+    Adds a 1D convolution layer to detect local word patterns: layer_conv_1d()
+    * Uses max pooling to reduce sequence length and focus on key features: layer_max_pooling_1d()
+    * Captures context and order of words (e.g. phrases like "fake news").
+
+The CNN is more powerful for text classification because it automatically extracts higher-level features from sequences of words, rather than relying solely on individual word embeddings.
+
+
+Compile the model:
+
+```{r}
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy")
+```
+
+Train the model:
+
+```{r}
+history <- model %>%
+  fit(x_train, train$y,
+    batch_size = 32, epochs = 10, verbose = 0)
+plot(history)
+```
+
+And evaluate the model on a test set:
+
+```{r}
+results <- model %>% evaluate(x_test, test$y, batch_size=128, verbose = 2)
+```
+
+
+
+
+
+
+# Pre-trained embeddings
+
+Change in embeddings approach: instead of learning word embeddings from scratch (random initialization), the model uses pre-trained embeddings.
+
+* Pre-trained embeddings are vectors already trained on large text corpora, capturing rich semantic relationships between words.
+* Transfer learning:
+    * The embeddings are derived from a previously trained model, leveraging knowledge from large-scale datasets.
+    * This approach allows the model to start with meaningful word representations, rather than learning from limited training data.
+    * Can improve accuracy and convergence speed since the network doesn’t need to learn embeddings from scratch.
+
+* Implementation with TensorFlow Hub:
+    * TensorFlow Hub (TFHub) allows loading pre-trained models and embeddings easily.
+    * Enables integration of embeddings like Word2Vec, GloVe, or BERT into a neural network.
+
+* Benefit for text classification:
+    * Pre-trained embeddings can help the model generalize better to unseen tweets.
+    * They are particularly useful when the dataset is small or domain-limited, as in this case.
+
+Use pre-trained embeddings $\to$ leverage external knowledge $\to$ feed into the neural network $\to$ improve performance without extensive training.
+
+
+```{r}
+tweets_sample_valid <- tweets_sample[seq_ok, ]
+
+training_rows <- which(tweets_sample_valid$id_str %in% training_ids$id_str)
+
+train <- list()
+test <- list()
+train$x <- tweets_sample_valid$text[training_rows]
+test$x <-  tweets_sample_valid$text[-training_rows]
+
+train$y <- as.integer(tweets_sample_valid$is_potus[training_rows])
+test$y <-  as.integer(tweets_sample_valid$is_potus[-training_rows])
+```
+
+Now to build the model. This works similarly to the previous notebook, in that we are going to convert tweets into embeddings vectors. But now we use a pre-trained text embedding as the first layer, which has three advantages:
+
+-   You don't have to worry about text preprocessing,
+-   Benefit from transfer learning,
+-   the embedding has a fixed size, so it's simpler to process.
+
+For this example you use a **pre-trained text embedding model** from [TensorFlow Hub](https://tfhub.dev) called [google/nnlm-en-dim50/2](https://tfhub.dev/google/nnlm-en-dim50/2).
+
+There are many other pre-trained text embeddings from TFHub that can be used:
+
+-   [google/nnlm-en-dim128/2](https://tfhub.dev/google/nnlm-en-dim128/2) - trained with the same NNLM architecture on the same data as [google/nnlm-en-dim50/2](https://tfhub.dev/google/nnlm-en-dim50/2), but with a larger embedding dimension. Larger dimensional embeddings can improve on your task but it may take longer to train your model.
+-   [google/nnlm-en-dim128-with-normalization/2](https://tfhub.dev/google/nnlm-en-dim128-with-normalization/2) - the same as [google/nnlm-en-dim128/2](https://tfhub.dev/google/nnlm-en-dim128/2), but with additional text normalization such as removing punctuation. This can help if the text in your task contains additional characters or punctuation.
+-   [google/universal-sentence-encoder/4](https://tfhub.dev/google/universal-sentence-encoder/4) - a much larger model yielding 512 dimensional embeddings trained with a deep averaging network (DAN) encoder.
+
+Find more about [text embedding models](https://tfhub.dev/s?module-type%20=%20text-embedding) on TFHub.
+
+Let's first create a Keras layer that uses a TensorFlow Hub model to embed the sentences, and try it out on a couple of input examples. Note that no matter the length of the input text, the output shape of the embeddings is: (num_examples, embedding_dimension)
+
+```{r}
+embedding <- "https://tfhub.dev/google/nnlm-en-dim50/2"
+hub_layer <- tfhub::layer_hub(handle = embedding, trainable = TRUE)
+hub_layer(train$x[1:2])
+```
+
+Now build the full model:
+
+```{r}
+model <- keras_model_sequential() %>%
+  hub_layer() %>%
+  layer_dense(16, activation = "relu") %>%
+  layer_dense(1, activation = "sigmoid")
+```
+
+The layers are stacked sequentially to build the classifier:
+
+1.  The first layer is a TensorFlow Hub layer. This layer uses a pre-trained Saved Model to map a tweet into its embedding vector. The pre-trained text embedding model that you are using ([google/nnlm-en-dim50/2](https://tfhub.dev/google/nnlm-en-dim50/2)) splits the sentence into tokens, embeds each token and then combines the embedding. The resulting dimensions are: `(num_examples, embedding_dimension)`. For this NNLM model, the `embedding_dimension` is 50.
+2.  This fixed-length output vector is piped through a fully-connected (`Dense`) layer with 16 hidden units.
+3.  The last layer is densely connected with a single output node.
+
+We can now compile the model:
+
+```{r}
+# Compile the model
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy")
+
+# Train the model
+history <- model %>% fit(
+  train$x, train$y,
+  epochs = 10, batch_size = 64, verbose = 0)
+plot(history)
+
+# Evaluate it's performance on a test set
+results <- model %>% evaluate(test$x, test$y, batch_size = 128, verbose = 2)
+```
+
+
+
+# Creating a TensorFlow dataset 
+
+* Uses the same MLP model with pre-trained embeddings (google/nnlm-en-dim50/2).
+* However, now we're going to read in data in a different format, assuming that each document (each tweet, in our case) is in it's own text file, and these files have been ordered in folders according to which class they are in (before or during tweets) and whether the are to be used for training or testing.
+* TensorFlow can automatically infer labels from folder names.
+* This structure is flexible, scalable, and easier to maintain, especially for large text datasets.
+
+```{r, message=FALSE}
+library(tfhub)
+```
+
+Dataset structure and preparation:
+
+* Each tweet is stored in its own text file, allowing flexible organization.
+* Files are organized into folders by:
+    * Class: before vs during presidency.
+    * Usage: train vs test.
+* This structure allows TensorFlow to automatically infer labels from folder names.
+
+Directory structure example:
+
+```{r}
+main_directory/
+    class_a/
+        a_text_1.txt
+        a_text_2.txt
+    class_b/
+        b_text_1.txt
+        b_text_2.txt
+```
+
+
+### Downloading and reading data
+
+The following code downloads the dataset to your machine and unzips it:
+
+```{r}
+download.file(
+  url = "https://github.com/iandurbach/datasci-fi/raw/master/data/trump_tweets.zip?raw=TRUE", 
+  destfile = "trumptweets.zip")
+
+unzip("trumptweets.zip", exdir = "data")
+```
+
+Note that each tweet is in its own file. Individual tweets can be read with readr::read_file()
+
+```{r}
+readr::read_file("trump_tweets/train/before/tr_0_1.txt")
+```
+
+Organizing tweets as separate files per class facilitates dataset creation and makes it easier to scale to new data.
+
+### Creating a TensorFlow dataset
+
+Now we can load the data off disk and prepare it for training. 
+To do this, we use the [text_dataset_from_directory](https://www.tensorflow.org/api_docs/python/tf/keras/preprocessing/text_dataset_from_directory) function. This expects a directory structure where each class has its own folder. Each folder contains text files, one per document (tweet). TensorFlow automatically assigns labels based on folder names.
+
+* Use text_dataset_from_directory() to read data directly from directories.
+* Parameters:
+    * batch_size: Number of examples per batch (e.g. 128).
+    * validation_split: Fraction of training data reserved for validation (e.g. 20%).
+    * subset: Whether the dataset is "training" or "validation".
+* This function returns a TensorFlow Dataset object, where each element contains:
+    1. A batch of tweets (text - the tweet is not preprocessed in any way).
+    2. Corresponding labels (0 = before presidency, 1 = during presidency).
+
+
+```{r}
+batch_size <- 128
+seed <- 42
+
+train_data <- text_dataset_from_directory(
+  'data/trump_tweets/train',
+  batch_size = batch_size,
+  validation_split = 0.2,
+  subset = 'training',
+  seed = seed)
+
+validation_data <- text_dataset_from_directory(
+  'data/trump_tweets/train',
+  batch_size = batch_size,
+  validation_split = 0.2,
+  subset = 'validation',
+  seed = seed)
+
+test_data <- text_dataset_from_directory(
+  'data/trump_tweets/test',
+  batch_size = batch_size)
+```
+
+
+Advantages of TensorFlow datasets
+
+* Tweets are not preprocessed initially; preprocessing happens automatically when passing through the embedding layer.
+* The dataset can be iterated batch-wise, making it memory-efficient and compatible with large corpora.
+* Can be passed directly to Keras models, eliminating the need to manually split features (x) and labels (y).
+
+Print the first 10 examples:
+
+```{r}
+batch <- train_data %>%
+  reticulate::as_iterator() %>%
+  reticulate::iter_next()
+
+batch[[1]][1]
+```
+
+Let's also print the first 10 labels.
+
+```{r}
+batch[[2]][1:10]
+```
+
+We can now proceed more or less as for the previous notebook. We first create a Keras layer that uses a TensorFlow Hub model to embed the sentences:
+
+```{r}
+embedding <- "https://tfhub.dev/google/nnlm-en-dim50/2"
+hub_layer <- tfhub::layer_hub(handle = embedding, trainable = TRUE)
+```
+
+* Pre-trained embeddings from TensorFlow Hub are used (google/nnlm-en-dim50/2).
+* layer_hub(handle = embedding, trainable = TRUE):
+    * Loads the embedding model.
+    * Embeddings are fine-tuned during training if trainable = TRUE.
+* Each tweet (text string) is converted into a dense vector representation capturing semantic meaning.
+
+
+And then build the full model:
+
+```{r}
+model <- keras_model_sequential() %>%
+  hub_layer() %>%  # converts raw text into embeddings
+  layer_dense(16, activation = 'relu') %>%
+  layer_dense(1, activation = 'sigmoid')
+```
+
+We can then configure and compile the model:
+
+```{r}
+model %>% compile(
+  loss = "binary_crossentropy",
+  optimizer = "adam",
+  metrics = "accuracy")
+```
+
+And then train and evaluate it. Notice the slightly different format used to specify the input data -- because we have created a TensorFlow dataset `train_data` and `test_data`, we can pass them in directly, rather than having to specify the features (previously, `train$x`) and outcomes (previously, `train$y`) explicitly.
+
+```{r}
+history <- model %>% fit(train_data, epochs = 10, verbose = 0)
+plot(history)
+```
+
+```{r}
+results <- model %>% evaluate(test_data, verbose = 2)
+```
+
+
+
+### Key concepts
+
+* Pre-trained embeddings: Leverage external knowledge, improving performance on small datasets.
+* TensorFlow Dataset API: Efficient, batch-wise data feeding for training neural networks.
+* Directory-based labeling: Simplifies dataset creation and ensures consistent label assignment.
+* Transfer learning: Fine-tuning pre-trained embeddings allows the network to adapt to the specific task (Trump tweet classification).
+
+
+
+

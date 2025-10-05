@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en"><head>
+
+<meta charset="utf-8">
+<meta name="generator" content="quarto-1.5.57">
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+
+<meta name="author" content="Hope Hennessy">
+<meta name="dcterms.date" content="2025-09-01">
+
+<title>LLM_ellmer – A Quarto Website</title>
+<style>
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+div.columns{display: flex; gap: min(4vw, 1.5em);}
+div.column{flex: auto; overflow-x: auto;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+ul.task-list li input[type="checkbox"] {
+  width: 0.8em;
+  margin: 0 0.8em 0.2em -1em; /* quarto-specific, see https://github.com/quarto-dev/quarto-cli/issues/4556 */ 
+  vertical-align: middle;
+}
+/* CSS for syntax highlighting */
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+  { counter-reset: source-line 0; }
+pre.numberSource code > span
+  { position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+  { content: counter(source-line);
+    position: relative; left: -1em; text-align: right; vertical-align: baseline;
+    border: none; display: inline-block;
+    -webkit-touch-callout: none; -webkit-user-select: none;
+    -khtml-user-select: none; -moz-user-select: none;
+    -ms-user-select: none; user-select: none;
+    padding: 0 4px; width: 4em;
+  }
+pre.numberSource { margin-left: 3em;  padding-left: 4px; }
+div.sourceCode
+  {   }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+</style>
+
+
+<script src="site_libs/quarto-nav/quarto-nav.js"></script>
+<script src="site_libs/quarto-nav/headroom.min.js"></script>
+<script src="site_libs/clipboard/clipboard.min.js"></script>
+<script src="site_libs/quarto-search/autocomplete.umd.js"></script>
+<script src="site_libs/quarto-search/fuse.min.js"></script>
+<script src="site_libs/quarto-search/quarto-search.js"></script>
+<meta name="quarto:offset" content="./">
+<script src="site_libs/quarto-html/quarto.js"></script>
+<script src="site_libs/quarto-html/popper.min.js"></script>
+<script src="site_libs/quarto-html/tippy.umd.min.js"></script>
+<script src="site_libs/quarto-html/anchor.min.js"></script>
+<link href="site_libs/quarto-html/tippy.css" rel="stylesheet">
+<link href="site_libs/quarto-html/quarto-syntax-highlighting.css" rel="stylesheet" id="quarto-text-highlighting-styles">
+<script src="site_libs/bootstrap/bootstrap.min.js"></script>
+<link href="site_libs/bootstrap/bootstrap-icons.css" rel="stylesheet">
+<link href="site_libs/bootstrap/bootstrap.min.css" rel="stylesheet" id="quarto-bootstrap" data-mode="light">
+<script id="quarto-search-options" type="application/json">{
+  "location": "navbar",
+  "copy-button": false,
+  "collapse-after": 3,
+  "panel-placement": "end",
+  "type": "overlay",
+  "limit": 50,
+  "keyboard-shortcut": [
+    "f",
+    "/",
+    "s"
+  ],
+  "show-item-context": false,
+  "language": {
+    "search-no-results-text": "No results",
+    "search-matching-documents-text": "matching documents",
+    "search-copy-link-title": "Copy link to search",
+    "search-hide-matches-text": "Hide additional matches",
+    "search-more-match-text": "more match in this document",
+    "search-more-matches-text": "more matches in this document",
+    "search-clear-button-title": "Clear",
+    "search-text-placeholder": "",
+    "search-detached-cancel-button-title": "Cancel",
+    "search-submit-button-title": "Submit",
+    "search-label": "Search"
+  }
+}</script>
+
+
+<link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="nav-fixed">
+
+<div id="quarto-search-results"></div>
+  <header id="quarto-header" class="headroom fixed-top">
+    <nav class="navbar navbar-expand-lg " data-bs-theme="dark">
+      <div class="navbar-container container-fluid">
+      <div class="navbar-brand-container mx-auto">
+    <a class="navbar-brand" href="./index.html">
+    <span class="navbar-title">A Quarto Website</span>
+    </a>
+  </div>
+            <div id="quarto-search" class="" title="Search"></div>
+          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-controls="navbarCollapse" role="menu" aria-expanded="false" aria-label="Toggle navigation" onclick="if (window.quartoToggleHeadroom) { window.quartoToggleHeadroom(); }">
+  <span class="navbar-toggler-icon"></span>
+</button>
+          <div class="collapse navbar-collapse" id="navbarCollapse">
+            <ul class="navbar-nav navbar-nav-scroll me-auto">
+  <li class="nav-item">
+    <a class="nav-link" href="./index.qmd"> 
+<span class="menu-text">Home</span></a>
+  </li>  
+  <li class="nav-item">
+    <span class="nav-link">
+<span class="menu-text">addition.qmd</span>
+    </span>
+  </li>  
+  <li class="nav-item">
+    <span class="nav-link">
+<span class="menu-text">multiplication.qmd</span>
+    </span>
+  </li>  
+</ul>
+          </div> <!-- /navcollapse -->
+            <div class="quarto-navbar-tools">
+</div>
+      </div> <!-- /container-fluid -->
+    </nav>
+</header>
+<!-- content -->
+<div id="quarto-content" class="quarto-container page-columns page-rows-contents page-layout-article page-navbar">
+<!-- sidebar -->
+<!-- margin-sidebar -->
+    <div id="quarto-margin-sidebar" class="sidebar margin-sidebar zindex-bottom">
+        
+    </div>
+<!-- main -->
+<main class="content" id="quarto-document-content">
+
+<header id="title-block-header" class="quarto-title-block default">
+<div class="quarto-title">
+<h1 class="title">LLM_ellmer</h1>
+</div>
+
+
+
+<div class="quarto-title-meta">
+
+    <div>
+    <div class="quarto-title-meta-heading">Author</div>
+    <div class="quarto-title-meta-contents">
+             <p>Hope Hennessy </p>
+          </div>
+  </div>
+    
+    <div>
+    <div class="quarto-title-meta-heading">Published</div>
+    <div class="quarto-title-meta-contents">
+      <p class="date">September 1, 2025</p>
+    </div>
+  </div>
+  
+    
+  </div>
+  
+
+
+</header>
+
+
+<div class="cell">
+<div class="sourceCode cell-code" id="cb1"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="fu">load</span>(<span class="st">"my_imdb_reviews.RData"</span>)</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>reviews <span class="ot">&lt;-</span> <span class="fu">as.character</span>(reviews<span class="sc">$</span>review)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>reviews <span class="ot">&lt;-</span> <span class="fu">sample</span>(reviews, <span class="dv">30</span>)</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a><span class="fu">head</span>(reviews, <span class="dv">3</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>[1] " finally saw this movie last night after hearing for years about what a flop it is  it s not as bad as a lot of people are making it out to be  it s at least as plausible as a james bond movie  and people generally like those  the premise is interesting  scavengers surviving on a flooded earth  you can pick apart the science behind it all  but if you can t suspend disbelief once in a while  you shouldn t go to the movies in the first place  of course  this doesn t work for dreck such as the laughably bad battlefield earth  which didn t have a single bright star to rise above the mediocrity  but in waterworld the characterizations and dialogue are pretty good  costner is surprisingly effective as the fish man  he s not an instantly likable character  he s cold  aloof  inhuman  self centered  at the very least  this movie deserves credit for having the courage to create a main character who isn t like every other summer blockbuster character to march across the silver screen over the last twenty five years  he throws the little girl into the ocean  for god s sake  he also sells helen to the horny englishman for a few sheets of paper  after dropping the sails onto her and konking her over the head with an oar  it is refreshing to see such an abject protagonist  and one so ripe for redemption  the film doesn t disappoint in that respect  because he earns his stripes without the unimaginative treacle usually associated with a big budget film  for instance  when he teaches the girl to swim it s believable without being sappy i think it s a shame to dismiss this movie as a flop without appreciating the evident work that went into the detailed characters and how they dealt with each other  perhaps it s best to watch the movie from that point of view instead of wondering where they got the fuel for the jet skis  "                                                                                                                                                                                                                                                                                               
+[2] "            spoiler warning                 even seven plus years later waterworld still stands as a monument to boundless excess   sure  part of the bazillions in the budget was because it was filmed  on location   but that location was water   they could have had the same effect by just filming off the coast and keeping the land out of the shots second was the complete absurdity of it all  even if every bit of ice on earth melted it still wouldn t be enough to drown everything and leave mount everest as the only dry place on earth    we re talking almost five miles of water    not to mention how people would realistically survive decades  or centuries as the plot says  on the ocean  with storms and heavy waves and all that   then there s how everything seems to be made out of metal  which would rust and corrode like crazy in salt water  or the smokers floating around on the exxon valdez  which was renamed and sank for real a few years after the movie came out   or finally  why everyone didn t cling onto the last bit of dry land and fight for it  not lose it and forget where it was        okay  ignore all that and it s a fair action flick with some good stunts   although the skiing kamikazes was a little much  and for all practical purposes it s an aquatic road warrior   matter of fact the role seems almost cut out for mel gibson and kevin costner comes across as a last minute replacement  even though the movie was his baby it helps to watch the version with the missing scenes  as some things are explained a bit more   such as  dry land  being everest  and some of those scenes contradict the rest of the movie  that apparently the ocean going population was relatively new and was dying out within these people s lifetimes maybe at some level the movie was trying to make a statement about people who squander and destroy resources  like the smokers  as compared to people who try to live more in harmony with things  like the mariner   jeanne tripplethorn was easy on the eyes and the mariner s circque du soleil boat was kind of cool  but otherwise this was just another bad hollywood movie  "
+[3] " waterworld is just like last action hero a really good movie with good performances that was very ahead of it s time and people hated it that s like saying that mad max was a bad movie because it was ahead of it s time or terminator or alien or anything else post apocalyptic movie or movies with fiction in it  there is a lot of action  laughs but also nice cinematography now the only problem i had with the movie it was sometimes it was a bit silly like dennis hopper s character says some lines that totally are made for villains of this kind and the cgi is not good you can also spot the green screen in some scenes threw out the movie but the film has a lot of action  good performances but also it s a funny movie and i m going to give waterworld a a  9 10  "                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            </code></pre>
+</div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb3"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Create a conversation with Mistral (choose an available model)</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>chat <span class="ot">&lt;-</span> <span class="fu">chat_mistral</span>(<span class="at">model =</span> <span class="st">"mistral-small-latest"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<ul>
+<li>ellmer is an R package that provides an interface to Mistral LLMs.</li>
+<li>chat_mistral() creates a chat session with the specified model.</li>
+<li>chat is now an object you can use to send prompts and get responses.</li>
+</ul>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb4"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Summarise a review in exactly 3 short bullets (no parsing needed)</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>summarise_review <span class="ot">&lt;-</span> <span class="cf">function</span>(txt, <span class="at">tone =</span> <span class="fu">c</span>(<span class="st">"neutral"</span>,<span class="st">"friendly"</span>,<span class="st">"formal"</span>)[<span class="dv">1</span>]) {</span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a>  prompt <span class="ot">&lt;-</span> <span class="fu">paste0</span>(</span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"This is a movie review of either Taxi Driver or Waterworld. </span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Summarise the product review in EXACTLY 3 bullets.</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Each bullet &lt;= 10 words, written in a "</span>, tone, <span class="st">" tone.</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Focus on what mattered to the reviewer </span><span class="sc">\n\n</span><span class="st">"</span>,</span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Review:</span><span class="sc">\n</span><span class="st">"</span>, txt</span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>  chat<span class="sc">$</span><span class="fu">chat</span>(prompt)</span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+</div>
+<ul>
+<li>Function: summarise_review()
+<ul>
+<li>Input: txt = a single movie review string.</li>
+<li>Optional: tone = “neutral”, “friendly”, or “formal” (default is neutral).</li>
+</ul></li>
+<li>Prompt construction:
+<ul>
+<li>The prompt variable is a text instruction given to the LLM.</li>
+<li>Instructions:
+<ul>
+<li>Summarize in exactly 3 bullet points</li>
+<li>Each bullet ≤ 10 words</li>
+<li>Written in the chosen tone</li>
+<li>Focus on what matters to the reviewer</li>
+</ul></li>
+</ul></li>
+<li>Calling the LLM: chat$chat(prompt)
+<ul>
+<li>Sends the prompt to the Mistral model and gets the response.</li>
+<li>Response is typically the 3-bullet summary.</li>
+</ul></li>
+</ul>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb5"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>reviews[<span class="dv">1</span>] <span class="co"># look at the first review</span></span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>[1] " finally saw this movie last night after hearing for years about what a flop it is  it s not as bad as a lot of people are making it out to be  it s at least as plausible as a james bond movie  and people generally like those  the premise is interesting  scavengers surviving on a flooded earth  you can pick apart the science behind it all  but if you can t suspend disbelief once in a while  you shouldn t go to the movies in the first place  of course  this doesn t work for dreck such as the laughably bad battlefield earth  which didn t have a single bright star to rise above the mediocrity  but in waterworld the characterizations and dialogue are pretty good  costner is surprisingly effective as the fish man  he s not an instantly likable character  he s cold  aloof  inhuman  self centered  at the very least  this movie deserves credit for having the courage to create a main character who isn t like every other summer blockbuster character to march across the silver screen over the last twenty five years  he throws the little girl into the ocean  for god s sake  he also sells helen to the horny englishman for a few sheets of paper  after dropping the sails onto her and konking her over the head with an oar  it is refreshing to see such an abject protagonist  and one so ripe for redemption  the film doesn t disappoint in that respect  because he earns his stripes without the unimaginative treacle usually associated with a big budget film  for instance  when he teaches the girl to swim it s believable without being sappy i think it s a shame to dismiss this movie as a flop without appreciating the evident work that went into the detailed characters and how they dealt with each other  perhaps it s best to watch the movie from that point of view instead of wondering where they got the fuel for the jet skis  "</code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb7"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Summarize review - generates 3-bullet summaries in different tones</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="fu">summarise_review</span>(reviews[<span class="dv">1</span>], <span class="at">tone =</span> <span class="st">"neutral"</span>) </span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>- **Premise is interesting despite scientific implausibility.**
+- **Costner delivers a refreshingly flawed protagonist.**
+- **Character dynamics and dialogue stand out.**</code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb9"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summarise_review</span>(reviews[<span class="dv">1</span>], <span class="at">tone =</span> <span class="st">"friendly"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>- **Fun, flawed but underrated—better than its reputation!**
+- **Costner’s antihero is refreshingly complex and flawed.**
+- **Great character depth and dialogue make it worth watching.**</code></pre>
+</div>
+<div class="sourceCode cell-code" id="cb11"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="fu">summarise_review</span>(reviews[<span class="dv">1</span>], <span class="at">tone =</span> <span class="st">"formal"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>- **Premise offers engaging, if implausible, post-apocalyptic worldbuilding.**
+- **Costner delivers a compelling, morally ambiguous protagonist.**
+- **Character development and dialogue elevate the film beyond expectations.**</code></pre>
+</div>
+</div>
+<p>You can see how the same review is summarized differently depending on tone.</p>
+<p>Experiment</p>
+<ul>
+<li>Try the function on different reviews.</li>
+<li>Run it multiple times on the same review to see if the output changes (LLMs are probabilistic).</li>
+<li>Change parameters:
+<ul>
+<li>Number of bullet points</li>
+<li>Max words per bullet</li>
+<li>Tone (neutral, friendly, formal)</li>
+</ul></li>
+</ul>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb13"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Summarize the first 5 reviews neutrally</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">5</span>) {</span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">"Review"</span>, i, <span class="st">"summary:</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">print</span>(<span class="fu">summarise_review</span>(reviews[i], <span class="at">tone =</span> <span class="st">"neutral"</span>))</span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">------------------------</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Review 1 summary:
+- **Premise is intriguing despite scientific implausibility**
+- **Costner delivers a complex, unlikable yet compelling protagonist**
+- **Strong character dynamics and dialogue elevate the film**
+- **Premise is intriguing despite scientific implausibility**
+- **Costner delivers a complex, unlikable yet compelling protagonist**
+- **Strong character dynamics and dialogue elevate the film**
+
+------------------------
+Review 2 summary:
+- **Excessive budget and unrealistic premise undermine the film**
+- **Action sequences and stunts are decent but flawed**
+- **Themes of resource waste and survival are underdeveloped**
+- **Excessive budget and unrealistic premise undermine the film**
+- **Action sequences and stunts are decent but flawed**
+- **Themes of resource waste and survival are underdeveloped**
+
+------------------------
+Review 3 summary:
+- **Strong performances and ahead-of-its-time vision**
+- **Action-packed with humor and decent cinematography**
+- **Flawed CGI and occasional silly moments**
+- **Strong performances and ahead-of-its-time vision**
+- **Action-packed with humor and decent cinematography**
+- **Flawed CGI and occasional silly moments**
+
+------------------------
+Review 4 summary:
+- **Strong performances elevate the film's gritty realism**
+- **Plot flaws undermine realism in key scenes**
+- **Character arcs and themes resonate despite inconsistencies**
+- **Strong performances elevate the film's gritty realism**
+- **Plot flaws undermine realism in key scenes**
+- **Character arcs and themes resonate despite inconsistencies**
+
+------------------------
+Review 5 summary:
+- **Strong visuals, action, and character development**
+- **Plot holes and rushed storytelling detract from experience**
+- **Underrated sci-fi epic with environmental themes**
+- **Strong visuals, action, and character development**
+- **Plot holes and rushed storytelling detract from experience**
+- **Underrated sci-fi epic with environmental themes**
+
+------------------------</code></pre>
+</div>
+</div>
+<p>Note: Inside loops, functions, or scripts R does not automatically print results.</p>
+<ul>
+<li>summarise_review() returns a string, but because it’s inside a loop, R won’t automatically display it. Using print() ensures the summary actually appears in the console.</li>
+<li>cat() is used for text formatting (like labels or separators), but it doesn’t automatically print objects like vectors or lists.</li>
+</ul>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb15"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run same review 3 times - LLMs are probabilistic - slightly different summaries each time</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (i <span class="cf">in</span> <span class="dv">1</span><span class="sc">:</span><span class="dv">3</span>) {</span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">"Attempt"</span>, i, <span class="st">":</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">print</span>(<span class="fu">summarise_review</span>(reviews[<span class="dv">1</span>], <span class="at">tone =</span> <span class="st">"neutral"</span>))</span>
+<span id="cb15-5"><a href="#cb15-5" aria-hidden="true" tabindex="-1"></a>  <span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb15-6"><a href="#cb15-6" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Attempt 1 :
+- **Premise is engaging despite scientific implausibility**
+- **Costner delivers a complex, unlikable yet compelling protagonist**
+- **Strong character dynamics elevate the flawed film**
+- **Premise is engaging despite scientific implausibility**
+- **Costner delivers a complex, unlikable yet compelling protagonist**
+- **Strong character dynamics elevate the flawed film**
+
+Attempt 2 :
+- **Premise offers engaging post-apocalyptic survival scenario**
+- **Costner delivers compelling, morally complex protagonist**
+- **Character development and relationships stand out**
+- **Premise offers engaging post-apocalyptic survival scenario**
+- **Costner delivers compelling, morally complex protagonist**
+- **Character development and relationships stand out**
+
+Attempt 3 :
+- **Premise is engaging despite scientific implausibility**
+- **Costner delivers a complex, unlikable yet compelling protagonist**
+- **Strong character dynamics elevate the flawed film**
+
+*(Note: This is clearly a review of "Waterworld," not "Taxi Driver," based on 
+the flooded Earth premise and Kevin Costner's performance.)*
+- **Premise is engaging despite scientific implausibility**
+- **Costner delivers a complex, unlikable yet compelling protagonist**
+- **Strong character dynamics elevate the flawed film**
+
+*(Note: This is clearly a review of "Waterworld," not "Taxi Driver," based on 
+the flooded Earth premise and Kevin Costner's performance.)*</code></pre>
+</div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb17"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Modify prompt parameters</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a>summarise_review_custom <span class="ot">&lt;-</span> <span class="cf">function</span>(txt, <span class="at">bullets =</span> <span class="dv">3</span>, <span class="at">tone =</span> <span class="st">"neutral"</span>) {</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a>  prompt <span class="ot">&lt;-</span> <span class="fu">paste0</span>(</span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a>    <span class="st">"This is a movie review of either Taxi Driver or Waterworld. </span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Summarise the product review in EXACTLY "</span>, bullets, <span class="st">" bullets.</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Each bullet &lt;= 10 words, written in a "</span>, tone, <span class="st">" tone.</span><span class="sc">\n</span><span class="st">"</span>,</span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Focus on what mattered to the reviewer </span><span class="sc">\n\n</span><span class="st">"</span>,</span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a>    <span class="st">"Review:</span><span class="sc">\n</span><span class="st">"</span>, txt</span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a>  )</span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a>  chat<span class="sc">$</span><span class="fu">chat</span>(prompt)</span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb17-12"><a href="#cb17-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-13"><a href="#cb17-13" aria-hidden="true" tabindex="-1"></a><span class="co"># Example: summarize in 5 bullets</span></span>
+<span id="cb17-14"><a href="#cb17-14" aria-hidden="true" tabindex="-1"></a><span class="fu">summarise_review_custom</span>(reviews[<span class="dv">2</span>], <span class="at">bullets =</span> <span class="dv">5</span>, <span class="at">tone =</span> <span class="st">"friendly"</span>)</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>- **Over-the-top budget with questionable practicality**
+- **Sci-fi logic gaps undermine believability**
+- **Decent action sequences and stunts**
+- **Costner feels miscast in lead role**
+- **Environmental themes buried under flaws**</code></pre>
+</div>
+</div>
+<div class="cell">
+<div class="sourceCode cell-code" id="cb19"><pre class="sourceCode r code-with-copy"><code class="sourceCode r"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Compare tone and bullet length together</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>tones <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="st">"neutral"</span>, <span class="st">"friendly"</span>, <span class="st">"formal"</span>)</span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>bullet_options <span class="ot">&lt;-</span> <span class="fu">c</span>(<span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">4</span>)</span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> (tone <span class="cf">in</span> tones) {</span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>  <span class="cf">for</span> (b <span class="cf">in</span> bullet_options) {</span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="st">"Tone:"</span>, tone, <span class="st">"| Bullets:"</span>, b, <span class="st">"</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>    <span class="fu">print</span>(<span class="fu">summarise_review_custom</span>(reviews[<span class="dv">3</span>], <span class="at">bullets =</span> b, <span class="at">tone =</span> tone))</span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cat</span>(<span class="st">"</span><span class="sc">\n</span><span class="st">------------------------</span><span class="sc">\n</span><span class="st">"</span>)</span>
+<span id="cb19-11"><a href="#cb19-11" aria-hidden="true" tabindex="-1"></a>  }</span>
+<span id="cb19-12"><a href="#cb19-12" aria-hidden="true" tabindex="-1"></a>}</span></code><button title="Copy to Clipboard" class="code-copy-button"><i class="bi"></i></button></pre></div>
+<div class="cell-output cell-output-stdout">
+<pre><code>Tone: neutral | Bullets: 2 
+- **Strong performances and ahead-of-its-time vision**
+- **Flawed CGI and occasional silly moments**
+- **Strong performances and ahead-of-its-time vision**
+- **Flawed CGI and occasional silly moments**
+
+------------------------
+Tone: neutral | Bullets: 3 
+- **Strong performances and visionary storytelling**
+- **Action-packed with humor and solid cinematography**
+- **Flawed CGI and occasional campy moments**
+- **Strong performances and visionary storytelling**
+- **Action-packed with humor and solid cinematography**
+- **Flawed CGI and occasional campy moments**
+
+------------------------
+Tone: neutral | Bullets: 4 
+- **Strong performances and visionary storytelling**
+- **Action-packed with humor and solid cinematography**
+- **Flawed CGI and occasional campy moments**
+- **Underrated sci-fi epic with lasting appeal**
+- **Strong performances and visionary storytelling**
+- **Action-packed with humor and solid cinematography**
+- **Flawed CGI and occasional campy moments**
+- **Underrated sci-fi epic with lasting appeal**
+
+------------------------
+Tone: friendly | Bullets: 2 
+- **Great performances and ahead-of-its-time action**
+- **Funny, stylish, but with some cheesy moments**
+- **Great performances and ahead-of-its-time action**
+- **Funny, stylish, but with some cheesy moments**
+
+------------------------
+Tone: friendly | Bullets: 3 
+- **Great performances and visionary action sequences**
+- **Funny, stylish, but with some cheesy moments**
+- **Underrated sci-fi gem with lasting appeal**
+- **Great performances and visionary action sequences**
+- **Funny, stylish, but with some cheesy moments**
+- **Underrated sci-fi gem with lasting appeal**
+
+------------------------
+Tone: friendly | Bullets: 4 
+- **Great performances and ahead-of-its-time vision**
+- **Packed with action, humor, and style**
+- **Cheesy moments and weak CGI**
+- **Underrated sci-fi classic with lasting appeal**
+- **Great performances and ahead-of-its-time vision**
+- **Packed with action, humor, and style**
+- **Cheesy moments and weak CGI**
+- **Underrated sci-fi classic with lasting appeal**
+
+------------------------
+Tone: formal | Bullets: 2 
+- **Strong performances and innovative post-apocalyptic vision**
+- **Technical flaws and occasional campiness detract from experience**
+- **Strong performances and innovative post-apocalyptic vision**
+- **Technical flaws and occasional campiness detract from experience**
+
+------------------------
+Tone: formal | Bullets: 3 
+- **Strong performances and visionary post-apocalyptic storytelling**
+- **Technical flaws and occasional campiness undermine execution**
+- **Underrated sci-fi action film with lasting appeal**
+- **Strong performances and visionary post-apocalyptic storytelling**
+- **Technical flaws and occasional campiness undermine execution**
+- **Underrated sci-fi action film with lasting appeal**
+
+------------------------
+Tone: formal | Bullets: 4 
+- **Strong performances and innovative post-apocalyptic vision**
+- **Technical flaws and campy elements detract from quality**
+- **Effective blend of action, humor, and cinematography**
+- **Underrated sci-fi film with lasting entertainment value**
+- **Strong performances and innovative post-apocalyptic vision**
+- **Technical flaws and campy elements detract from quality**
+- **Effective blend of action, humor, and cinematography**
+- **Underrated sci-fi film with lasting entertainment value**
+
+------------------------</code></pre>
+</div>
+</div>
+
+
+
+</main> <!-- /main -->
+<script id="quarto-html-after-body" type="application/javascript">
+window.document.addEventListener("DOMContentLoaded", function (event) {
+  const toggleBodyColorMode = (bsSheetEl) => {
+    const mode = bsSheetEl.getAttribute("data-mode");
+    const bodyEl = window.document.querySelector("body");
+    if (mode === "dark") {
+      bodyEl.classList.add("quarto-dark");
+      bodyEl.classList.remove("quarto-light");
+    } else {
+      bodyEl.classList.add("quarto-light");
+      bodyEl.classList.remove("quarto-dark");
+    }
+  }
+  const toggleBodyColorPrimary = () => {
+    const bsSheetEl = window.document.querySelector("link#quarto-bootstrap");
+    if (bsSheetEl) {
+      toggleBodyColorMode(bsSheetEl);
+    }
+  }
+  toggleBodyColorPrimary();  
+  const icon = "";
+  const anchorJS = new window.AnchorJS();
+  anchorJS.options = {
+    placement: 'right',
+    icon: icon
+  };
+  anchorJS.add('.anchored');
+  const isCodeAnnotation = (el) => {
+    for (const clz of el.classList) {
+      if (clz.startsWith('code-annotation-')) {                     
+        return true;
+      }
+    }
+    return false;
+  }
+  const onCopySuccess = function(e) {
+    // button target
+    const button = e.trigger;
+    // don't keep focus
+    button.blur();
+    // flash "checked"
+    button.classList.add('code-copy-button-checked');
+    var currentTitle = button.getAttribute("title");
+    button.setAttribute("title", "Copied!");
+    let tooltip;
+    if (window.bootstrap) {
+      button.setAttribute("data-bs-toggle", "tooltip");
+      button.setAttribute("data-bs-placement", "left");
+      button.setAttribute("data-bs-title", "Copied!");
+      tooltip = new bootstrap.Tooltip(button, 
+        { trigger: "manual", 
+          customClass: "code-copy-button-tooltip",
+          offset: [0, -8]});
+      tooltip.show();    
+    }
+    setTimeout(function() {
+      if (tooltip) {
+        tooltip.hide();
+        button.removeAttribute("data-bs-title");
+        button.removeAttribute("data-bs-toggle");
+        button.removeAttribute("data-bs-placement");
+      }
+      button.setAttribute("title", currentTitle);
+      button.classList.remove('code-copy-button-checked');
+    }, 1000);
+    // clear code selection
+    e.clearSelection();
+  }
+  const getTextToCopy = function(trigger) {
+      const codeEl = trigger.previousElementSibling.cloneNode(true);
+      for (const childEl of codeEl.children) {
+        if (isCodeAnnotation(childEl)) {
+          childEl.remove();
+        }
+      }
+      return codeEl.innerText;
+  }
+  const clipboard = new window.ClipboardJS('.code-copy-button:not([data-in-quarto-modal])', {
+    text: getTextToCopy
+  });
+  clipboard.on('success', onCopySuccess);
+  if (window.document.getElementById('quarto-embedded-source-code-modal')) {
+    // For code content inside modals, clipBoardJS needs to be initialized with a container option
+    // TODO: Check when it could be a function (https://github.com/zenorocha/clipboard.js/issues/860)
+    const clipboardModal = new window.ClipboardJS('.code-copy-button[data-in-quarto-modal]', {
+      text: getTextToCopy,
+      container: window.document.getElementById('quarto-embedded-source-code-modal')
+    });
+    clipboardModal.on('success', onCopySuccess);
+  }
+    var localhostRegex = new RegExp(/^(?:http|https):\/\/localhost\:?[0-9]*\//);
+    var mailtoRegex = new RegExp(/^mailto:/);
+      var filterRegex = new RegExp('/' + window.location.host + '/');
+    var isInternal = (href) => {
+        return filterRegex.test(href) || localhostRegex.test(href) || mailtoRegex.test(href);
+    }
+    // Inspect non-navigation links and adorn them if external
+ 	var links = window.document.querySelectorAll('a[href]:not(.nav-link):not(.navbar-brand):not(.toc-action):not(.sidebar-link):not(.sidebar-item-toggle):not(.pagination-link):not(.no-external):not([aria-hidden]):not(.dropdown-item):not(.quarto-navigation-tool):not(.about-link)');
+    for (var i=0; i<links.length; i++) {
+      const link = links[i];
+      if (!isInternal(link.href)) {
+        // undo the damage that might have been done by quarto-nav.js in the case of
+        // links that we want to consider external
+        if (link.dataset.originalHref !== undefined) {
+          link.href = link.dataset.originalHref;
+        }
+      }
+    }
+  function tippyHover(el, contentFn, onTriggerFn, onUntriggerFn) {
+    const config = {
+      allowHTML: true,
+      maxWidth: 500,
+      delay: 100,
+      arrow: false,
+      appendTo: function(el) {
+          return el.parentElement;
+      },
+      interactive: true,
+      interactiveBorder: 10,
+      theme: 'quarto',
+      placement: 'bottom-start',
+    };
+    if (contentFn) {
+      config.content = contentFn;
+    }
+    if (onTriggerFn) {
+      config.onTrigger = onTriggerFn;
+    }
+    if (onUntriggerFn) {
+      config.onUntrigger = onUntriggerFn;
+    }
+    window.tippy(el, config); 
+  }
+  const noterefs = window.document.querySelectorAll('a[role="doc-noteref"]');
+  for (var i=0; i<noterefs.length; i++) {
+    const ref = noterefs[i];
+    tippyHover(ref, function() {
+      // use id or data attribute instead here
+      let href = ref.getAttribute('data-footnote-href') || ref.getAttribute('href');
+      try { href = new URL(href).hash; } catch {}
+      const id = href.replace(/^#\/?/, "");
+      const note = window.document.getElementById(id);
+      if (note) {
+        return note.innerHTML;
+      } else {
+        return "";
+      }
+    });
+  }
+  const xrefs = window.document.querySelectorAll('a.quarto-xref');
+  const processXRef = (id, note) => {
+    // Strip column container classes
+    const stripColumnClz = (el) => {
+      el.classList.remove("page-full", "page-columns");
+      if (el.children) {
+        for (const child of el.children) {
+          stripColumnClz(child);
+        }
+      }
+    }
+    stripColumnClz(note)
+    if (id === null || id.startsWith('sec-')) {
+      // Special case sections, only their first couple elements
+      const container = document.createElement("div");
+      if (note.children && note.children.length > 2) {
+        container.appendChild(note.children[0].cloneNode(true));
+        for (let i = 1; i < note.children.length; i++) {
+          const child = note.children[i];
+          if (child.tagName === "P" && child.innerText === "") {
+            continue;
+          } else {
+            container.appendChild(child.cloneNode(true));
+            break;
+          }
+        }
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(container);
+        }
+        return container.innerHTML
+      } else {
+        if (window.Quarto?.typesetMath) {
+          window.Quarto.typesetMath(note);
+        }
+        return note.innerHTML;
+      }
+    } else {
+      // Remove any anchor links if they are present
+      const anchorLink = note.querySelector('a.anchorjs-link');
+      if (anchorLink) {
+        anchorLink.remove();
+      }
+      if (window.Quarto?.typesetMath) {
+        window.Quarto.typesetMath(note);
+      }
+      // TODO in 1.5, we should make sure this works without a callout special case
+      if (note.classList.contains("callout")) {
+        return note.outerHTML;
+      } else {
+        return note.innerHTML;
+      }
+    }
+  }
+  for (var i=0; i<xrefs.length; i++) {
+    const xref = xrefs[i];
+    tippyHover(xref, undefined, function(instance) {
+      instance.disable();
+      let url = xref.getAttribute('href');
+      let hash = undefined; 
+      if (url.startsWith('#')) {
+        hash = url;
+      } else {
+        try { hash = new URL(url).hash; } catch {}
+      }
+      if (hash) {
+        const id = hash.replace(/^#\/?/, "");
+        const note = window.document.getElementById(id);
+        if (note !== null) {
+          try {
+            const html = processXRef(id, note.cloneNode(true));
+            instance.setContent(html);
+          } finally {
+            instance.enable();
+            instance.show();
+          }
+        } else {
+          // See if we can fetch this
+          fetch(url.split('#')[0])
+          .then(res => res.text())
+          .then(html => {
+            const parser = new DOMParser();
+            const htmlDoc = parser.parseFromString(html, "text/html");
+            const note = htmlDoc.getElementById(id);
+            if (note !== null) {
+              const html = processXRef(id, note);
+              instance.setContent(html);
+            } 
+          }).finally(() => {
+            instance.enable();
+            instance.show();
+          });
+        }
+      } else {
+        // See if we can fetch a full url (with no hash to target)
+        // This is a special case and we should probably do some content thinning / targeting
+        fetch(url)
+        .then(res => res.text())
+        .then(html => {
+          const parser = new DOMParser();
+          const htmlDoc = parser.parseFromString(html, "text/html");
+          const note = htmlDoc.querySelector('main.content');
+          if (note !== null) {
+            // This should only happen for chapter cross references
+            // (since there is no id in the URL)
+            // remove the first header
+            if (note.children.length > 0 && note.children[0].tagName === "HEADER") {
+              note.children[0].remove();
+            }
+            const html = processXRef(null, note);
+            instance.setContent(html);
+          } 
+        }).finally(() => {
+          instance.enable();
+          instance.show();
+        });
+      }
+    }, function(instance) {
+    });
+  }
+      let selectedAnnoteEl;
+      const selectorForAnnotation = ( cell, annotation) => {
+        let cellAttr = 'data-code-cell="' + cell + '"';
+        let lineAttr = 'data-code-annotation="' +  annotation + '"';
+        const selector = 'span[' + cellAttr + '][' + lineAttr + ']';
+        return selector;
+      }
+      const selectCodeLines = (annoteEl) => {
+        const doc = window.document;
+        const targetCell = annoteEl.getAttribute("data-target-cell");
+        const targetAnnotation = annoteEl.getAttribute("data-target-annotation");
+        const annoteSpan = window.document.querySelector(selectorForAnnotation(targetCell, targetAnnotation));
+        const lines = annoteSpan.getAttribute("data-code-lines").split(",");
+        const lineIds = lines.map((line) => {
+          return targetCell + "-" + line;
+        })
+        let top = null;
+        let height = null;
+        let parent = null;
+        if (lineIds.length > 0) {
+            //compute the position of the single el (top and bottom and make a div)
+            const el = window.document.getElementById(lineIds[0]);
+            top = el.offsetTop;
+            height = el.offsetHeight;
+            parent = el.parentElement.parentElement;
+          if (lineIds.length > 1) {
+            const lastEl = window.document.getElementById(lineIds[lineIds.length - 1]);
+            const bottom = lastEl.offsetTop + lastEl.offsetHeight;
+            height = bottom - top;
+          }
+          if (top !== null && height !== null && parent !== null) {
+            // cook up a div (if necessary) and position it 
+            let div = window.document.getElementById("code-annotation-line-highlight");
+            if (div === null) {
+              div = window.document.createElement("div");
+              div.setAttribute("id", "code-annotation-line-highlight");
+              div.style.position = 'absolute';
+              parent.appendChild(div);
+            }
+            div.style.top = top - 2 + "px";
+            div.style.height = height + 4 + "px";
+            div.style.left = 0;
+            let gutterDiv = window.document.getElementById("code-annotation-line-highlight-gutter");
+            if (gutterDiv === null) {
+              gutterDiv = window.document.createElement("div");
+              gutterDiv.setAttribute("id", "code-annotation-line-highlight-gutter");
+              gutterDiv.style.position = 'absolute';
+              const codeCell = window.document.getElementById(targetCell);
+              const gutter = codeCell.querySelector('.code-annotation-gutter');
+              gutter.appendChild(gutterDiv);
+            }
+            gutterDiv.style.top = top - 2 + "px";
+            gutterDiv.style.height = height + 4 + "px";
+          }
+          selectedAnnoteEl = annoteEl;
+        }
+      };
+      const unselectCodeLines = () => {
+        const elementsIds = ["code-annotation-line-highlight", "code-annotation-line-highlight-gutter"];
+        elementsIds.forEach((elId) => {
+          const div = window.document.getElementById(elId);
+          if (div) {
+            div.remove();
+          }
+        });
+        selectedAnnoteEl = undefined;
+      };
+        // Handle positioning of the toggle
+    window.addEventListener(
+      "resize",
+      throttle(() => {
+        elRect = undefined;
+        if (selectedAnnoteEl) {
+          selectCodeLines(selectedAnnoteEl);
+        }
+      }, 10)
+    );
+    function throttle(fn, ms) {
+    let throttle = false;
+    let timer;
+      return (...args) => {
+        if(!throttle) { // first call gets through
+            fn.apply(this, args);
+            throttle = true;
+        } else { // all the others get throttled
+            if(timer) clearTimeout(timer); // cancel #2
+            timer = setTimeout(() => {
+              fn.apply(this, args);
+              timer = throttle = false;
+            }, ms);
+        }
+      };
+    }
+      // Attach click handler to the DT
+      const annoteDls = window.document.querySelectorAll('dt[data-target-cell]');
+      for (const annoteDlNode of annoteDls) {
+        annoteDlNode.addEventListener('click', (event) => {
+          const clickedEl = event.target;
+          if (clickedEl !== selectedAnnoteEl) {
+            unselectCodeLines();
+            const activeEl = window.document.querySelector('dt[data-target-cell].code-annotation-active');
+            if (activeEl) {
+              activeEl.classList.remove('code-annotation-active');
+            }
+            selectCodeLines(clickedEl);
+            clickedEl.classList.add('code-annotation-active');
+          } else {
+            // Unselect the line
+            unselectCodeLines();
+            clickedEl.classList.remove('code-annotation-active');
+          }
+        });
+      }
+  const findCites = (el) => {
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const cites = parentEl.dataset.cites;
+      if (cites) {
+        return {
+          el,
+          cites: cites.split(' ')
+        };
+      } else {
+        return findCites(el.parentElement)
+      }
+    } else {
+      return undefined;
+    }
+  };
+  var bibliorefs = window.document.querySelectorAll('a[role="doc-biblioref"]');
+  for (var i=0; i<bibliorefs.length; i++) {
+    const ref = bibliorefs[i];
+    const citeInfo = findCites(ref);
+    if (citeInfo) {
+      tippyHover(citeInfo.el, function() {
+        var popup = window.document.createElement('div');
+        citeInfo.cites.forEach(function(cite) {
+          var citeDiv = window.document.createElement('div');
+          citeDiv.classList.add('hanging-indent');
+          citeDiv.classList.add('csl-entry');
+          var biblioDiv = window.document.getElementById('ref-' + cite);
+          if (biblioDiv) {
+            citeDiv.innerHTML = biblioDiv.innerHTML;
+          }
+          popup.appendChild(citeDiv);
+        });
+        return popup.innerHTML;
+      });
+    }
+  }
+});
+</script>
+</div> <!-- /content -->
+
+
+
+
+</body></html>

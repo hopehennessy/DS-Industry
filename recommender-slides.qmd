@@ -1,0 +1,498 @@
+---
+title: "Recommender systems"
+#date: "`r format(Sys.time(), '%d %B, %Y')`"
+format: 
+  revealjs:
+      smaller: false
+      scrollable: true
+      theme: default
+      footer: "STA5073Z Data Science for Industry"
+      slide-number: true
+      show-slide-number: print
+      echo: true
+      embed-resources: true
+---
+
+```{r setup, include=FALSE, message=FALSE}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(recosystem)
+library(DT)
+
+load("data/movielens-small.RData")
+load("data/recommender.RData")
+viewed_movies <- rename(viewed_movies, `Harry Potter and the Philosopher's Stone (2001)` = `Harry Potter and the Sorcerer's Stone (a.k.a. Harry Potter and the Philosopher's Stone) (2001)`)
+```
+
+## Overview 
+
+1. Introduce recommender systems based on collaborative filtering
+2. Build recommender systems based on various kinds of collaborative filtering
+    + user-based collaborative filtering
+    + item-based collaborative filtering
+    + matrix factorization
+3. Introduce L2 regularization and bias terms, two ways of improving recommender systems based on matrix factorization.
+4. Use these approaches to build a system for recommending movies to users based on their past viewing habits
+
+## Dataset {.smaller}
+
+```{r, echo=FALSE}
+datatable(viewed_movies,
+  rownames = FALSE,
+  options = list(
+    dom = "tip",
+    pageLength = 5,
+    initComplete = JS(
+      "function(settings, json) {",
+      "$(this.api().table().header()).css({'font-size': '75%'});",
+      "}"
+    )
+  )
+)
+```
+
+```{r, echo=FALSE}
+sorted_my_users <- as.character(unlist(viewed_movies[, 1]))
+viewed_movies <- as.matrix(viewed_movies[, -1])
+row.names(viewed_movies) <- sorted_my_users
+```
+
+## A very naive recommender system
+
+Recommend the most popular movie that a user hasn't seen before.
+
+```{r}
+apply(viewed_movies, 2, sum) |> sort(decreasing = TRUE)
+```
+
+# User-based collaborative filtering
+
+## UBCF
+
+- problem with previous idea is that everyone is treated the same.
+- when making a recommendation to *me*, all other users count the same.
+- UBCF changes this by upweighting the opinions of people that are "similar" to me.
+- Basic idea: recommend movies to me that users similar to me have seen.
+
+## What does "similar" mean?
+
+- Various measures of similarity
+- We use *cosine similarity* $$cos(\theta) = \frac{\boldsymbol x \cdot \boldsymbol y}{||\boldsymbol x|| \ ||\boldsymbol y||} = \frac{\sum_{i=1}^{n}x_iy_i}{\sqrt{\sum_{i=1}^{n}x^2_i} \sqrt{\sum_{i=1}^{n}y^2_i}}$$
+- If entries cannot be negative, then lies between 0 and 1
+- If entries can be negative, then lies between -1 and 1
+
+## Cosine similarity
+
+```{r, echo = FALSE}
+cosine_sim <- function(a, b) {
+  crossprod(a, b) / sqrt(crossprod(a) * crossprod(b))
+}
+```
+
+```{r}
+x1 <- c(1, 1, 1, 0, 0)
+x2 <- c(1, 1, 1, 0, 0)
+cosine_sim(x1, x2)
+```
+
+## Cosine similarity
+
+```{r}
+x1 <- c(1, 1, 1, 0, 0)
+x2 <- c(0, 0, 0, 1, 1)
+cosine_sim(x1, x2)
+```
+
+## Cosine similarity
+
+```{r}
+x1 <- c(1, 1, 1, 0, 0)
+x2 <- c(0, 0, 0, 0, 1)
+cosine_sim(x1, x2)
+```
+
+## Cosine similarity
+
+Try an example from our data
+
+```{r}
+as.numeric(viewed_movies[1, ])
+as.numeric(viewed_movies[3, ])
+cosine_sim(viewed_movies[1, ], viewed_movies[3, ])
+```
+
+## Cosine similarity
+
+For all pairs of users in our dataset
+
+```{r}
+user_similarities <- matrix(0, nrow = 15, ncol = 15)
+for (i in 1:14) {
+  for (j in (i + 1):15) {
+    user_similarities[i, j] <- cosine_sim(viewed_movies[i, ], viewed_movies[j, ])
+  }
+}
+user_similarities <- user_similarities + t(user_similarities)
+# diag(user_similarities) <- 0
+row.names(user_similarities) <- row.names(viewed_movies)
+colnames(user_similarities) <- row.names(viewed_movies)
+round(user_similarities, 2)
+```
+
+## What should user 222 watch next?
+
+- Add up the number of users that have seen each movie, 
+- but weight each user by their similarity to user 222. 
+
+## What should user 222 watch next?
+
+Recommendation score for *2001: A Space Odyssey*
+
+```{r}
+seen_movie <- viewed_movies[, "2001: A Space Odyssey (1968)"]
+sim_to_user <- user_similarities["222", ]
+data.frame(seen_movie, sim_to_user, score = seen_movie * sim_to_user)
+```
+
+## What should user 222 watch next?
+
+Recommendation score for *2001: A Space Odyssey*
+
+```{r}
+seen_movie <- viewed_movies[, "2001: A Space Odyssey (1968)"]
+sim_to_user <- user_similarities["222", ]
+sum(seen_movie * sim_to_user)
+```
+
+## What should user 222 watch next?
+
+Scores for all movies
+
+```{r}
+user_scores <- data.frame(
+  title = colnames(viewed_movies),
+  score = as.vector(user_similarities["222", ] %*% viewed_movies),
+  seen = as.vector(viewed_movies["222", ])
+)
+user_scores |> arrange(desc(score))
+```
+
+# Item-based collaborative filtering
+
+## ITCF
+
+- Basic idea: recommend movies to me that are similar to movies I have already seen.
+- Movie **A** is similar to movie **B** if users who see **A** also tend to see **B**.
+
+## Cosine similarity again
+
+Users seeing Big Lebowski
+```{r}
+viewed_movies[, 3]
+```
+Users seeing Bourne Identity
+```{r}
+viewed_movies[, 4]
+# viewed_movies[, "Bourne Identity, The (2002)"]
+```
+Cosine similarity between the movies
+```{r}
+cosine_sim(viewed_movies[, 3], viewed_movies[, 4])
+```
+
+# Cosine similarity between movies in a similar genre
+cosine_sim(viewed_movies[, "Bourne Identity, The (2002)"], viewed_movies[, "Departed, The (2006)"])
+
+## Cosine similarity
+
+```{r}
+# transpose the viewed_movies matrix
+movies_user <- t(viewed_movies)
+
+# get all similarities between MOVIES
+movie_similarities <- matrix(0, nrow = 20, ncol = 20)
+for (i in 1:19) {
+  for (j in (i + 1):20) {
+    movie_similarities[i, j] <- cosine_sim(viewed_movies[, i], viewed_movies[, j])
+  }
+}
+movie_similarities <- movie_similarities + t(movie_similarities)
+diag(movie_similarities) <- 0
+row.names(movie_similarities) <- colnames(viewed_movies)
+colnames(movie_similarities) <- colnames(viewed_movies)
+```
+
+## Cosine similarity
+
+What movies are most similar to "Apocalypse Now"?
+
+```{r}
+sort(movie_similarities[, "Apocalypse Now (1979)"], decreasing = TRUE)
+```
+
+## What should user 222 see next?
+
+What have they already seen?
+
+```{r}
+user_seen <- ratings_red |>
+  filter(userId == 222) |>
+  select(title) |>
+  unlist() |>
+  as.character()
+user_seen
+```
+
+## What should user 222 see next?
+
+Calculate similarities between these movies and all the rest.
+
+```{r}
+movie_similarities[, user_seen]
+```
+
+## What should user 222 see next?
+
+Sum up over the seen movies
+
+```{r}
+sort(apply(movie_similarities[, user_seen], 1, sum), decreasing = T)
+```
+
+# Predicting numeric ratings
+
+## Data
+
+```{r,echo=FALSE}
+# get ratings in wide format
+ratings_wide <- ratings_red |>
+  select(userId, title, rating) |>
+  complete(userId, title) |>
+  pivot_wider(names_from = title, values_from = rating)
+
+ratings_wide |> 
+  gt::gt()
+
+# convert data to matrix form
+# sorted_my_users <- as.character(unlist(ratings_wide[, 1]))
+# ratings_wide <- as.matrix(ratings_wide[, -1])
+# row.names(ratings_wide) <- sorted_my_users
+```
+
+## UB CF with ratings data
+
+- Use same approach as before to generate predicted ratings?
+- No, because predictions won't be on same 1-5 scale
+- This is because similarities don't sum to one
+- Solution: standardise them to sum to one -- how?
+
+## Predicted ratings for User 222
+
+Let's take generating a predicted score for "2001: A Space Odyssey (1968)" as an example.
+
+Similarities to user 222:
+
+```{r}
+user_similarities["222", ]
+```
+
+Ratings for "2001: A Space Odyssey (1968)":
+
+```{r}
+ratings_wide[["2001: A Space Odyssey (1968)"]]
+```
+
+## Predicted ratings for User 222
+
+Standardise the similarity scores. Note they must sum to one *only over those users who have seen "2001"*.
+
+```{r}
+stdW <- user_similarities["222", ] * !is.na(ratings_wide[["2001: A Space Odyssey (1968)"]])
+stdW <- stdW / sum(stdW)
+stdW
+```
+
+## Predicted ratings for User 222
+
+```{r}
+sum(ratings_wide[["2001: A Space Odyssey (1968)"]] * stdW, na.rm = TRUE)
+```
+
+Now will always lie between 1-5
+
+# Collaborative filtering with matrix factorization 
+
+## Matrix factorization 
+
+- Ratings matrix is partially empty
+- MF methods "complete the matrix"
+- Basic idea: possible to write many matrices as the product of two (or more) other matrices
+- These new matrices are complete i.e. no blank entries 
+- This is *factorizing* a matrix
+
+## Matrix factorization by hand
+
+## The `recosystem` package
+
+- New bigger dataset
+- Max 50 ratings per user
+
+```{r}
+load("data/movielens-small.RData")
+movielens <- left_join(ratings, movies, by = "movieId")
+movielens <- movielens |>
+  group_by(userId) |>
+  slice_sample(n = 50) |>
+  ungroup()
+```
+
+## The `recosystem` package
+
+- id variables (here *userId* and *movieId*) must be integers starting at either 0 or 1
+
+```{r}
+userIds <- data.frame(userId = unique(movielens$userId), new_userId = 0:(length(unique(movielens$userId)) - 1))
+movieIds <- data.frame(movieId = unique(movielens$movieId), new_movieId = 0:(length(unique(movielens$movieId)) - 1))
+movielens <- movielens |>
+  left_join(userIds) |>
+  left_join(movieIds)
+movielens <- movielens |> dplyr::select(userId = new_userId, movieId = new_movieId, rating, title)
+```
+
+## The `recosystem` package
+
+Make a 80/20 train/test split,
+
+```{r}
+test_data <- movielens |>
+  group_by(userId) |>
+  slice_sample(prop = 0.2) |>
+  ungroup()
+train_data <- anti_join(movielens, test_data, by = c("userId", "movieId"))
+```
+
+## The `recosystem` package
+
+Specific format for ratings data required by *recosystem*,
+
+```{r}
+reco_train <- data_memory(
+  user_index = train_data$userId,
+  item_index = train_data$movieId,
+  rating = train_data$rating
+)
+
+reco_test <- data_memory(
+  user_index = test_data$userId,
+  item_index = test_data$movieId,
+  rating = test_data$rating
+)
+```
+
+## The `recosystem` package
+
+We start by creating an empty model object
+
+```{r}
+rs <- Reco()
+```
+
+## The `recosystem` package
+
+Note the R6 class, where an object has methods than can be applied to it attached.
+
+```{r}
+str(rs)
+```
+
+## The `recosystem` package
+
+Train the recommender system with `rs$train`
+
+```{r}
+rs$train(reco_train, opts = list(
+  dim = 10, # number of latent factors
+  nmf = TRUE, # perform non-negative matrix factorization
+  niter = 500, # number of iterations
+  verbose = FALSE
+))
+```
+
+## The `recosystem` package
+
+Or do some automated hyperparameter setting using function `tune`.
+
+```{r, cache=TRUE}
+opts <- rs$tune(reco_train, opts = list(
+  dim = c(10, 25, 50),
+  lrate = c(0.1, 0.01),
+  niter = 20, 
+  nmf = TRUE, 
+  nthread = 4
+))
+opts
+```
+
+## The `recosystem` package
+
+And then retrain the model at the optimal hyperparameters just identified,
+
+```{r, cache=TRUE}
+rs$train(reco_train, opts = c(
+  opts$min, 
+  niter = 50,
+  nmf = TRUE,
+  nthread = 4,
+  verbose = FALSE)
+)
+```
+
+## The `recosystem` package
+
+Finally make and evaluate predictions on the test dataset,
+
+```{r}
+MF_pred <- rs$predict(reco_test)
+sqrt(mean((MF_pred - test_data$rating)^2))
+```
+
+
+## The `recosystem` package
+
+```{r}
+pred_data <- test_data |> 
+  mutate(
+    predicted_rating = MF_pred,
+    improved_rating = case_when(
+      MF_pred < 0 ~ 0,
+      MF_pred > 5 ~ 5,
+      TRUE ~ MF_pred
+    )
+  )
+```
+
+## The `recosystem` package
+
+```{r}
+pred_data |> 
+  filter(!between(predicted_rating, 0, 5)) |> 
+  gt::gt()
+```
+
+## The `recosystem` package {.smaller}
+
+```{r, echo = FALSE}
+pred_data |> 
+  select(userId, movie = title, rating, prediction = improved_rating) |> 
+  mutate(prediction = round(prediction, 2)) |> 
+  DT::datatable(
+    rownames = FALSE, 
+    options = list(
+      dom = "ftip",
+      pageLength = 5
+    )
+  )
+```
+

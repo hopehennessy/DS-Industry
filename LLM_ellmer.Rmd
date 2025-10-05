@@ -1,0 +1,148 @@
+---
+title: "LLM_ellmer"
+author: "Hope Hennessy"
+date: "2025-09-01"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ellmer)
+```
+
+```{r}
+load("my_imdb_reviews.RData")
+reviews <- as.character(reviews$review)
+reviews <- sample(reviews, 30)
+head(reviews, 3)
+```
+
+```{r}
+# Create a conversation with Mistral (choose an available model)
+chat <- chat_mistral(model = "mistral-small-latest")
+
+```
+
+* ellmer is an R package that provides an interface to Mistral LLMs.
+* chat_mistral() creates a chat session with the specified model.
+* chat is now an object you can use to send prompts and get responses.
+
+```{r}
+# Summarise a review in exactly 3 short bullets (no parsing needed)
+summarise_review <- function(txt, tone = c("neutral","friendly","formal")[1]) {
+  prompt <- paste0(
+    "This is a movie review of either Taxi Driver or Waterworld. \n",
+    "Summarise the product review in EXACTLY 3 bullets.\n",
+    "Each bullet <= 10 words, written in a ", tone, " tone.\n",
+    "Focus on what mattered to the reviewer \n\n",
+    "Review:\n", txt
+  )
+  chat$chat(prompt)
+}
+```
+
+
+* Function: summarise_review()
+    * Input: txt = a single movie review string.
+    * Optional: tone = "neutral", "friendly", or "formal" (default is neutral).
+* Prompt construction:
+    * The prompt variable is a text instruction given to the LLM.
+    * Instructions:
+        * Summarize in exactly 3 bullet points
+        * Each bullet ≤ 10 words
+        * Written in the chosen tone
+        * Focus on what matters to the reviewer
+* Calling the LLM: chat$chat(prompt)
+    * Sends the prompt to the Mistral model and gets the response.
+    * Response is typically the 3-bullet summary.
+
+
+```{r}
+reviews[1] # look at the first review
+
+# Summarize review - generates 3-bullet summaries in different tones
+summarise_review(reviews[1], tone = "neutral") 
+summarise_review(reviews[1], tone = "friendly")
+summarise_review(reviews[1], tone = "formal")
+```
+
+You can see how the same review is summarized differently depending on tone.
+
+Experiment
+
+* Try the function on different reviews.
+* Run it multiple times on the same review to see if the output changes (LLMs are probabilistic).
+* Change parameters:
+    * Number of bullet points
+    * Max words per bullet
+    * Tone (neutral, friendly, formal)
+
+
+```{r}
+# Summarize the first 5 reviews neutrally
+for (i in 1:5) {
+  cat("Review", i, "summary:\n")
+  print(summarise_review(reviews[i], tone = "neutral"))
+  cat("\n------------------------\n")
+}
+
+```
+
+Note: Inside loops, functions, or scripts R does not automatically print results. 
+
+* summarise_review() returns a string, but because it’s inside a loop, R won’t automatically display it. Using print() ensures the summary actually appears in the console.
+* cat() is used for text formatting (like labels or separators), but it doesn’t automatically print objects like vectors or lists.
+
+
+```{r}
+# Run same review 3 times - LLMs are probabilistic - slightly different summaries each time
+for (i in 1:3) {
+  cat("Attempt", i, ":\n")
+  print(summarise_review(reviews[1], tone = "neutral"))
+  cat("\n")
+}
+```
+
+```{r}
+# Modify prompt parameters
+summarise_review_custom <- function(txt, bullets = 3, tone = "neutral") {
+  prompt <- paste0(
+    "This is a movie review of either Taxi Driver or Waterworld. \n",
+    "Summarise the product review in EXACTLY ", bullets, " bullets.\n",
+    "Each bullet <= 10 words, written in a ", tone, " tone.\n",
+    "Focus on what mattered to the reviewer \n\n",
+    "Review:\n", txt
+  )
+  chat$chat(prompt)
+}
+
+# Example: summarize in 5 bullets
+summarise_review_custom(reviews[2], bullets = 5, tone = "friendly")
+
+```
+
+
+```{r}
+# Compare tone and bullet length together
+
+tones <- c("neutral", "friendly", "formal")
+bullet_options <- c(2, 3, 4)
+
+for (tone in tones) {
+  for (b in bullet_options) {
+    cat("Tone:", tone, "| Bullets:", b, "\n")
+    print(summarise_review_custom(reviews[3], bullets = b, tone = tone))
+    cat("\n------------------------\n")
+  }
+}
+
+
+
+```
+
+
+
+
+
+
+

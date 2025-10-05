@@ -1,0 +1,1084 @@
+---
+title: "Text Mining 2"
+author: "Hope Hennessy"
+date: "2025-09-15"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+Concepts:
+
+1. Tidy data principles – what makes data tidy and why it matters.
+2. Manipulating datasets using `pivot_longer()` and `pivot_wider()` from the `tidyr` package.
+3. How to tokenize text (splitting into words, sentences, or other meaningful units).
+4. Removing stop words and cleaning text using regular expressions.
+5. Summarizing text data and comparing text before vs. after a specific date.
+6. Understanding n-grams (unigrams, bigrams, trigrams).
+7. Building a text generator using basic Natural Language Processing (NLP).
+
+
+```{r load-packages}
+library(tidyverse)   # Core functions for data wrangling and visualization
+library(tidytext)    # Specialized tools for tidy text mining
+library(wordcloud)   # For generating wordcloud visualizations
+library(lubridate)   # For date manipulation
+```
+
+# Understanding the Dataset
+
+We use a dataset containing all tweets from Donald Trump (2009–2018). This dataset has been pre-cleaned and saved as an `.RData` file.
+
+```{r load-data, eval=FALSE}
+load('trump-tweets.RData')
+tweets <- as_tibble(tweets)
+str(tweets)
+head(tweets, 3)
+```
+
+* `created_at` – date and time the tweet was created.
+* `text` – the tweet content.
+* `is_retweet` – logical indicator for retweets.
+* `favorite_count` – number of likes.
+
+# Working with Dates
+
+We convert `created_at` into a proper date-time format using `parse_datetime()` from `lubridate`.
+
+```{r parse-dates, eval=FALSE}
+tweets <- tweets %>% 
+  mutate(date = parse_datetime(str_sub(tweets$created_at, 5, 30), '%b %d %H:%M:%S %z %Y'))
+
+tweets$date[1]
+
+head(tweets, 3)
+```
+
+* `str_sub()` extracts characters 5–30 from the timestamp.
+* `parse_datetime()` interprets them into a usable date-time format.
+
+## Example: Checking Dataset Coverage
+
+Find the first and last tweet dates, and calculate the overall time span.
+
+```{r date-coverage, eval=FALSE}
+min(tweets$date)      # Earliest tweet
+max(tweets$date)      # Latest tweet
+max(tweets$date) - min(tweets$date)  # Duration
+```
+
+Count how many months are covered:
+
+```{r count-months, eval=FALSE}
+n_months <- interval(min(tweets$date), max(tweets$date)) %/% months(1) + 1
+n_months
+```
+
+* interval(start, end) - creates a time interval object representing the period from the earliest date to the latest date.
+* months(1) creates a duration representing one month
+* The + 1 is added to include the starting partial month in the count.
+
+## Visualizing Tweets Over Time
+
+We can plot the volume of tweets over time, distinguishing retweets vs. original tweets.
+
+```{r tweet-timeline, eval=FALSE}
+ggplot(tweets, aes(x = date, fill = is_retweet)) +
+  geom_histogram(position = 'identity', bins = n_months, show.legend = FALSE) +
+  labs(title = "Tweet Volume Over Time", x = "Date", y = "Number of Tweets")
+```
+
+* `fill = is_retweet` colors the bars by retweet status.
+* `bins = n_months` creates one bin per month.
+
+
+* Tweets are naturally messy and inconsistent. They don’t follow a strict, predictable format: Special characters like @ and # carry special meaning (mentions and hashtags). Some tweets include links, while others don’t. A tweet might be a single sentence, or a long thread with multiple sentences. Users can mention people by name, use emojis, or even mix languages.
+* Because of this variation, it’s difficult to analyze tweets directly without first bringing some order to the chaos. This is where the concept of tidy data becomes crucial.
+* Tidy data provides a consistent structure for messy datasets. By organizing information into clear rows and columns, we make it easier to filter, summarize, and visualize.
+
+
+# Why Tidy Data Matters
+
+A dataset is tidy when:
+
+1. Each variable has its own column.
+2. Each observation has its own row.
+3. Each value has its own cell.
+
+## Untidy Data Example
+
+```{r untidy-example}
+untidy_ratings <- tribble(
+  ~user_id, ~age, ~city, ~movie1, ~movie2, ~movie3,
+  1, 49, 'Cpt', 5, NA, NA,
+  2, 20, 'Cpt', 3, 3, 1, 
+  3, 30, 'Jhb', NA, 5, 1)
+
+untidy_ratings
+```
+
+Problem: Movie ratings are spread across multiple columns (`movie1`, `movie2`, `movie3`).
+
+## pivot_longer()
+
+We use `pivot_longer()` to transform wide columns into rows.
+
+```{r tidy-transformation}
+tidy_ratings <- untidy_ratings %>% 
+  pivot_longer(
+    cols = c(movie1, movie2, movie3),
+    names_to = 'title',
+    values_to = 'rating')
+
+tidy_ratings
+```
+
+Now, each row represents a single user-movie-rating observation.
+
+## Handling Missing Values
+
+Two types of missing values:
+
+1. Explicit missingness: Represented by `NA`.
+2. Implicit missingness: Row omitted entirely.
+
+We can drop `NA` ratings directly:
+
+```{r drop-na}
+tidy_ratings_imp <- untidy_ratings %>% 
+  pivot_longer(
+    cols = c(movie1, movie2, movie3),
+    names_to = 'title',
+    values_to = 'rating',
+    values_drop_na = TRUE)
+
+tidy_ratings_imp
+```
+
+## pivot_wider()
+
+To spread rows back into wide columns:
+
+```{r pivot-wider}
+untidy_ratings_back <- tidy_ratings %>% 
+  pivot_wider(
+    names_from = 'title',
+    values_from = 'rating')
+
+untidy_ratings_back
+```
+
+
+# Tidy Text Mining
+
+## What is a Token?
+
+A token is the basic unit of analysis, e.g.:
+
+* Word (e.g. "freedom")
+* Sentence
+* Pair of words (bigram)
+* Character
+
+## Tokenization with `unnest_tokens()`
+
+* Tokenization is the process of splitting text up into the units that we are interested in analyzing. 
+* The `unnest_tokens()` function performs tokenization by splitting text up into the required tokens, and creating a new data frame with one token per row i.e. tidy text data.
+
+Suppose we want to analyze the individual words Trump uses in his tweets. We do this by `unnest_tokens(tweets, word, text, token = 'words')`. Note the arguments passed to `unnest_tokens()`:
+
+* the "messy" data frame containing the text (`tweets`)
+* the variable name we want to use for the tokens in the new tidy data frame (`word`)
+* the variable name where the text is stored in the "messy" data frame (`text` i.e. the tweets are in `tweets$text`)
+* the unit of tokenization (`token = 'words'`)
+
+Note that the argument `to_lower` is TRUE by default.
+
+```{r tokenization-example}
+# Create sample data
+sample_tweets <- tibble(
+  tweet_id = 1:3,
+  text = c("Make America great again!", "The media is fake news.", "Thank you for your support."))
+
+# Tokenize by words
+sample_tweets %>% unnest_tokens(word, text, token = 'words')
+```
+
+1. `sample_tweets` – original data frame.
+2. `word` – new column to store tokens.
+3. `text` – column containing text to split.
+4. `token` – type of token (`'words'`, `'sentences'`, `'ngrams'`, `'regex'`).
+
+### Example: Tokenize by sentences
+
+```{r sentence-tokens}
+sample_tweets %>% unnest_tokens(sentences, text, token = 'sentences') %>%
+  select(sentences, everything())
+```
+
+## Regex Tokenization
+
+We can specify what counts as a token using regular expressions.
+
+Example: Keep `@` and `#` symbols, exclude punctuation.
+
+```{r regex-tokenization}
+# Sample tweet with mentions and hashtags
+social_tweet <- tibble(
+  text = "Great meeting with @realDonaldTrump today! #MAGA #winning")
+
+social_tweet %>% unnest_tokens(word, text, token = 'regex', pattern = "[^\\w_#@']")
+```
+
+
+We're now in a position to transform the full set of tweets into tidy text format. We'll tokenize with the regular expression we used in the last example above. 
+
+
+```{r}
+unnest_reg <- "[^\\w_#@']" # means “anything NOT in this set of characters”
+
+tidy_tweets <- tweets %>% 
+  mutate(text, text = str_replace_all(text, "’", "'")) %>%  # replace curly apostrophe with straight
+  unnest_tokens(word, text, token = 'regex', pattern = unnest_reg) %>% 
+  select(date, word, favorite_count)
+
+```
+
+
+* [^\\w_#@'] means “anything NOT in this set of characters. Therefore the regex matches anything that is NOT a letter, number, underscore, hashtag, mention, or apostrophe.
+* unnest_tokens() (from the tidytext package) splits the text column into individual tokens (words).
+    * word $\to$ name of the new column that will contain each token.
+    * token = 'regex' $\to$ tells it to use a regular expression to decide where to split.
+    * pattern = unnest_reg $\to$ the custom regex we defined earlier.
+* Each tweet gets broken into multiple rows, one per word, hashtag, or mention, while removing unwanted characters like punctuation.
+* Keeps only the columns:
+    * date $\to$ when the tweet was posted
+    * word $\to$ the tokenized word from the tweet
+    * favorite_count $\to$ number of likes
+    * Let's plot the most commonly used words:
+* The code:
+    * Makes tweets tidy for analysis.
+    * Keeps meaningful tokens like hashtags (#) and mentions (@) intact.
+    * Enables word frequency analysis, hashtag tracking, and later steps like sentiment analysis or topic modeling.
+
+```{r}
+tidy_tweets %>% 
+  count(word, sort = TRUE) %>% 
+  filter(rank(desc(n)) <= 20) %>% 
+  ggplot(aes(reorder(word, n), n)) + geom_col() + coord_flip() + xlab('')
+```
+
+Not very useful! 
+
+* The top words are mostly common English words like "the", "to", "and", etc.
+* These words are called stop words:
+    * They appear very frequently.
+    * They carry little meaning for text analysis.
+* Without removing stop words, your word frequency plot will highlight uninformative words.
+* Tidytext has a built-in dictionary of stop words - can remove them before counting, so your plot will show meaningful content words like hashtags, topics, or proper nouns instead of "the" or "to".
+
+
+# Cleaning Text
+
+## Stop Words
+
+* Common words like "the", "and", "to" add little meaning.
+* The `tidytext` package provides a built-in dataset of stop words.
+
+```{r stop-words-sample}
+stop_words %>% 
+  pull(word) %>%  # extracts just the word column from the data frame as a vector of words
+  sample(10)
+```
+
+We remove these words using `filter()`:
+
+```{r remove-stop-words}
+# Example with sample tweets
+sample_tweets %>%
+  unnest_tokens(word, text) %>% # breaks tweets into tokens & creates colunm with one word per row
+  filter(!word %in% stop_words$word) # keeps only words not in the stop word list
+```
+
+
+Problem
+
+* Even after removing stop words, some tokens in tweets are not meaningful for analysis, for example:
+    * URLs: http://... or https://...
+    * Links starting with www
+    * HTML character codes: &amp;, &lt;, &gt;
+* These aren’t “stop words” in the tidytext sense, so we have to remove them manually.
+
+
+
+Example:
+
+```{r}
+tweets_example <- c(
+  "Check this out https://example.com &amp; it's cool!",
+  "Visit www.test.com for more info",
+  "Hello &lt;world&gt;!")
+
+cleaned <- str_replace_all(tweets_example, "https?:.*?(\\s|.$)", "")
+cleaned <- str_replace_all(cleaned, "www.*?(\\s|.$)", "")
+cleaned <- str_replace_all(cleaned, "&amp;|&lt;|&gt;", "")
+
+cleaned
+```
+
+* .*? (lazy match) is important; .* (greedy) would delete too much text.
+* (\s|.$) ensures we remove just the intended substring and not beyond.
+
+
+
+
+## Removing URLs and HTML Tags
+
+We use a regular expression to strip out links and unwanted symbols.
+
+```{r clean-text, eval=FALSE}
+replace_reg <- '(https?:.*?(\\s|.$))|(www.*?(\\s|.$))|&amp;|&lt;|&gt;'
+
+tweets <- tweets %>% 
+  mutate(text = str_replace_all(text, replace_reg, ''))
+```
+
+* replace_reg a string holding a regex pattern - matches unwanted tokens we don’t want in our analysis:
+    * URLs starting with http:,  https: or www
+    * HTML codes: &amp;, &lt;, &gt;
+* In R, regex patterns are always stored as strings. Functions like str_replace_all() interpret the string as a regex when passed as the second argument.
+* str_replace_all() replace_reg to match and remove unwanted text.
+
+
+
+```{r clean-text-example}
+# Demonstrate with example text
+messy_text <- tibble(
+  text = c("Check this out: https://example.com great stuff!",
+           "Visit www.example.org for more &amp; better content",
+           "HTML tags &lt;script&gt; are annoying &gt; sometimes"))
+
+replace_reg <- '(https?:.*?(\\s|.$))|(www.*?(\\s|.$))|&amp;|&lt;|&gt;'
+
+messy_text %>%
+  mutate(clean_text = str_replace_all(text, replace_reg, ''))
+```
+
+We look at a few examples below. Play around with the input tweets and the regular expression to get a good idea of what everything does.
+
+```{r}
+# pattern that we want to remove (replace with nothing)
+replace_reg <- '(https?:.*?(\\s|.$))|(www.*?(\\s|.$))|&amp;|&lt;|&gt;'
+
+# tweet with a www. link
+tweets$text[145]
+str_replace_all(tweets$text[145], replace_reg, '')
+
+# tweet with an http link at end of tweet
+tweets$text[194]
+str_replace_all(tweets$text[194], replace_reg, '')
+
+# tweet with multiple &amp; 
+tweets$text[36185]
+str_replace_all(tweets$text[36185], replace_reg, '')
+```
+
+Now we can put it all together -- first remove the retweets (we only want to look at Trump's own tweets), then remove the non-words, unnest into words, and remove stop words.
+
+```{r}
+unnest_reg <- "[^\\w_#@']"
+
+tidy_tweets <- tweets %>% 
+  mutate(text, text = str_replace_all(text, "’", "'")) %>%             # replace curly apostrophe with straight
+  filter(is_retweet == FALSE) %>%                                      # remove retweets
+  mutate(text = str_replace_all(text, replace_reg, '')) %>%            # remove with a reg exp (http, www, etc)
+  unnest_tokens(word, text, token = 'regex', pattern = unnest_reg) %>% # unnest tokens
+  filter(!word %in% stop_words$word, str_detect(word, '[a-z]')) %>%    # remove stop words and tokens without letters
+  select(date,word,favorite_count) 
+```
+
+
+# Analyzing Word Frequencies
+
+We count words and plot the 20 most frequent words:
+
+```{r word-frequency, eval=FALSE}
+tidy_tweets %>% 
+  count(word, sort = TRUE) %>% 
+  filter(rank(desc(n)) <= 20) %>% 
+  ggplot(aes(reorder(word, n), n)) +
+  geom_col() +
+  coord_flip() +
+  xlab('') +
+  ylab('Frequency') +
+  labs(title = "Top 20 Most Frequent Words")
+```
+It turns out Trump likes tweeting about himself, mostly. 
+
+## Comparing Text Before and After a Date
+
+We can also see whether being president has changed the most commonly used words he uses. To do this we first create a new variable, a binary indicator of whether a tweet was made before or after Trump became president. We do this by comparing the date of the tweet to the date of the US election (8th November 2016). Note that once we have the date in a recognized format like `ymd` or `dmy`, this comparison can be trivially done.
+
+```{r potus-indicator, eval=FALSE}
+tidy_tweets <- tidy_tweets %>% 
+  mutate(is_potus = (date > ymd(20161108)))
+```
+
+```{r}
+# make plot size bit bigger for next plots
+options(repr.plot.width = 6, repr.plot.height = 5)
+
+tidy_tweets %>% 
+  group_by(is_potus) %>% 
+  count(word, sort = TRUE) %>% 
+  filter(rank(desc(n)) <= 20) %>% 
+  ggplot(aes(reorder(word, n), n, fill = is_potus)) + geom_col() + coord_flip() + xlab('')
+```
+
+The plot above is a bit unsatisfying - there are obviously a lot more tweets pre-presidency, and that makes it difficult to see what is happening in the post-presidency frequencies. Below we transform the absolute frequencies into relative ones and plot those (it may be helpful to break up the second code block to understand what each line does).
+
+
+```{r}
+total_tweets <- tidy_tweets %>% 
+  group_by(is_potus) %>% 
+  summarise(total = n())
+```
+
+
+```{r}
+tidy_tweets %>% 
+  group_by(is_potus) %>% 
+  count(word, sort = TRUE) %>%                   # count the number of times word used 
+  left_join(total_tweets, by = 'is_potus') %>%   # add the total number of tweets made (pre- or post-potus)
+  mutate(freq = n / total) %>%                     # add relative frequencies
+  filter(rank(desc(freq)) < 20) %>% 
+  ggplot(aes(reorder(word, freq), freq, fill = is_potus)) + 
+  geom_col() + 
+  coord_flip() + 
+  xlab('') +
+  facet_grid(.~is_potus)
+```
+
+
+## Wordcloud Visualization
+
+Below is a wordcloud of Trump's tweets after he became president. Wordclouds are not particularly informative -- they just plot words proportional to their frequency of use and position them in an attractive way. This uses the **wordcloud** package.
+
+```{r wordcloud, eval=FALSE}
+tidy_tweets %>% 
+  filter(is_potus == TRUE) %>% 
+  count(word) %>% 
+  with(wordcloud(word, n, max.words = 100))
+```
+
+
+
+
+
+
+
+
+# N-Grams
+
+An *n*-gram is a sequence of *n* words in a text.
+
+* Unigram: Single word.
+* Bigram: Two consecutive words.
+* Trigram: Three consecutive words.
+
+The `unnest_tokens()` function allows you to easily extract n-grams using the "ngrams" token.
+
+```{r ngrams-example}
+# Bigrams
+sample_tweets %>%
+  unnest_tokens(bigram, text, token = 'ngrams', n = 2)
+```
+
+```{r trigrams-example}
+# Trigrams
+sample_tweets %>%
+  unnest_tokens(trigram, text, token = 'ngrams', n = 3)
+```
+
+Why n-grams are useful:
+
+* "not good" != "good" $\to$ single words lose context.
+* Bigrams capture phrases and context.
+
+
+Removing stop words from bigrams requires a different approach than with unigrams. Since bigrams consist of two words, we need to:
+
+1. Separate each bigram into its constituent words
+2. Filter out bigrams where either word is a stop word
+4. Reunite the remaining word pairs back into bigrams
+
+This process uses tidyr functions separate() and unite() for data manipulation.
+
+
+### Step 1: Initial Tokenization
+
+```{r}
+# Define regex pattern to clean URLs and HTML entities
+replace_reg <- '(https?:.*?(\\s|.$))|(www.*?(\\s|.$))|&amp;|&lt;|&gt;'
+
+# Extract bigrams from tweet text
+tweet_bigrams <- tweets |> 
+  filter(is_retweet == FALSE) |>           # Remove retweets
+  mutate(text = str_replace_all(text, replace_reg, '')) |>  # Clean URLs/HTML
+  unnest_tokens(bigram, text, token = 'ngrams', n = 2)      # Create bigrams
+```
+
+* token = 'ngrams' specifies we want n-grams
+* n = 2 creates bigrams (2-word combinations)
+
+### Step 2: Separate Bigrams into Individual Words
+
+```{r}
+# Split each bigram into two separate columns
+bigrams_separated <- tweet_bigrams |> 
+  separate(bigram, c('word1', 'word2'), sep = ' ')
+```
+
+
+
+
+### Step 3: Filter Out Stop Words
+
+```{r}
+# Remove bigrams where either word is a stop word
+bigrams_filtered <- bigrams_separated |> 
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word)
+```
+
+Important: We use & (AND) not | (OR) because we want to keep bigrams where neither word is a stop word.
+
+### Step 4: Reunite Filtered Bigrams
+
+```{r}
+# join up the bigrams again
+bigrams_united <- bigrams_filtered %>% 
+  unite(bigram, word1, word2, sep = ' ')
+```
+
+This reconstructs meaningful bigrams without stop words.
+
+We can now see what the most common bigrams are. Note that these are very different from the most common words. That is, they definitely provide different and useful information over and above what the unigrams did.
+
+### Analyzing Bigram Frequency
+
+
+Method 1: Count Separated Words
+
+```{r}
+# Count using the separated format
+bigram_counts <- bigrams_filtered |> 
+  count(word1, word2, sort = TRUE) |> 
+  filter(rank(desc(n)) <= 10) |> 
+  na.omit()  # Remove NAs (from tweets with single words)
+
+bigram_counts
+```
+
+Method 2: Count United Bigrams (alternative approach)
+
+```{r}
+bigrams_united |> 
+  count(bigram, sort = TRUE) |> 
+  filter(rank(desc(n)) <= 10)
+```
+
+Both methods produce the same results, but Method 1 is often preferred for further analysis since it keeps word pairs accessible.
+
+## Complete bigram analysis pipeline
+
+```{r}
+# Complete bigram analysis pipeline
+replace_reg <- '(https?:.*?(\\s|.$))|(www.*?(\\s|.$))|&amp;|&lt;|&gt;'
+
+bigram_analysis <- tweets |> 
+  filter(is_retweet == FALSE) |> 
+  mutate(text = str_replace_all(text, replace_reg, '')) |> 
+  unnest_tokens(bigram, text, token = 'ngrams', n = 2) |>
+  separate(bigram, c('word1', 'word2'), sep = ' ') |>
+  filter(!word1 %in% stop_words$word & !word2 %in% stop_words$word) |>
+  count(word1, word2, sort = TRUE) |>
+  na.omit()
+
+# View top 10 bigrams
+head(bigram_analysis, 10)
+```
+
+
+
+
+
+
+
+# Text Generation with N-gram Models
+
+## Introduction to Text Generation
+
+Natural Language Generation (NLG) is a branch of NLP focused on creating human-like text from structured data or learned patterns. Applications include:
+
+- Automated report generation (e.g. weather reports from numerical data)
+- Chatbots and conversational AI
+- Creative writing assistance
+- Social media content generation
+
+In this tutorial, we'll build progressively sophisticated models to generate text in a specific style by analyzing word sequence patterns.
+
+## The N-gram Approach to Text Generation
+
+N-gram models generate text by learning transition probabilities between sequences of words:
+
+- Unigram model: Predicts next word based on current single word
+- Bigram model: Predicts next word based on current pair of words
+- Trigram model: Uses three-word sequences (and so on...)
+
+### The Algorithm
+
+1. Build vocabulary: Extract all possible starting words/phrases
+2. Create transition matrix: Count how often each word/phrase follows another
+3. Generate text: 
+    - Start with a seed word/phrase
+    - Probabilistically select next word based on learned patterns
+    - Continue until stopping condition is met (punctuation, character limit, etc.)
+
+## Data Preparation: Including Punctuation as Tokens
+
+For text generation, we need to treat punctuation (especially periods) as separate tokens to properly model sentence boundaries:
+
+```{r data_prep}
+# Step 1: Define regex pattern that preserves periods as word boundaries
+unnest_reg <- "[^\\w_#@'\\.]"  # Everything EXCEPT word chars, underscores, #, @, ', and periods
+                                # This means periods will be kept as separate tokens
+
+# Step 2: Transform the raw tweet data into a word-by-word format
+tidy_tweets_wstop <- tweets |> 
+  # Only analyze original tweets, not retweets
+  filter(is_retweet == FALSE) |> 
+  
+  # Text cleaning transformations:
+  mutate(text = str_replace_all(text, "[Dd]on't", 'dont')) |>     # "Don't" -> "dont" (remove apostrophe)
+  mutate(text = str_replace_all(text, '(j\\.)|(J\\.)', 'j')) |>   # "J." -> "j" (clean abbreviations)
+  mutate(text = str_replace_all(text, replace_reg, '')) |>        # Remove URLs and HTML entities
+  
+  # CRITICAL: Add space before periods so they become separate words when tokenized
+  mutate(text = str_replace_all(text, '\\.', ' \\.')) |>          # "Hello." becomes "Hello ."
+  
+  # Tokenize using our custom regex pattern
+  unnest_tokens(word, text, token = 'regex', pattern = unnest_reg) |> 
+  
+  # Keep only essential columns
+  select(id_str, date, word) |> 
+  
+  # Group by individual tweets to create word sequences
+  group_by(id_str) |>           
+  
+  # Create "next_word" column: what word comes after each current word?
+  mutate(next_word = lead(word))  # lead() shifts values up: word[2] becomes next_word[1]
+
+# Preview the transformed data structure
+head(tidy_tweets_wstop, 40)
+```
+
+What this code achieves:
+
+- Input: Raw tweet text like `"Hello world. How are you?"`  
+- Output: Word pairs like `("Hello", "world"), ("world", "."), (".", "How"), ("How", "are")...`
+- Critical insight: The period "." is now a word that can start sentences in our generation model
+- Data structure: Each row contains a word and the word that follows it in the original text
+
+## Model 1: Unigram with Random Sampling
+
+### Building the Transition Matrix
+
+```{r unigram_transitions}
+# Step 1: Count how often each word is followed by each other word
+transitions <- tidy_tweets_wstop |> 
+  # Group by word pairs to count their frequency
+  group_by(word, next_word) |> 
+  count() |>                    # Count occurrences of each (word, next_word) pair
+  arrange(desc(n)) |>           # Sort by frequency (most common first)
+  ungroup()                     # Remove grouping to avoid slow operations later
+
+# Step 2: Handle end-of-tweet cases where next_word is NA
+# Replace NA with "." so tweets can end properly during generation
+transitions$next_word[is.na(transitions$next_word)] <- '.'
+
+transitions
+```
+
+What this creates:
+
+- Transition matrix**: A table showing "if current word is X, next word could be Y (with frequency Z)"
+- Example rows: `("the", "best", 45)` means "the best" appeared 45 times
+- Critical for generation: This frequency data determines how likely each word transition is
+- NA handling: Last words in tweets have no "next word", so we treat them as ending with periods
+
+### Text Generation Algorithm
+
+```{r unigram_random}
+set.seed(5073)
+
+# Initialize generation
+current <- '.'      # Start after sentence end
+result <- '.'       # Initialize result string
+keep_going <- TRUE
+
+while(keep_going == TRUE) {
+  
+  # Select next word randomly from all possible transitions
+  next_word <- transitions |> 
+    filter(word == as.character(current)) |> 
+    slice_sample(n = 1) |>  # Pure random sampling
+    select(next_word)
+  
+  # Build result string
+  result <- str_c(result, ' ', next_word)
+  current <- next_word
+  
+  # Check if current word has any transitions
+  n_current <- sum(transitions$word == as.character(current))
+  
+  # Stopping conditions
+  keep_going <- ifelse(n_current == 0, FALSE,                    # No more transitions
+                       ifelse(nchar(result) < 140, TRUE,         # Under character limit
+                              ifelse(str_detect(current, '\\.'), FALSE, TRUE)))  # Hit period
+}
+
+result
+```
+
+Result: The output is largely gibberish because random sampling ignores the frequency of word transitions.
+
+## Model 2: Unigram with Weighted Sampling
+
+Instead of random sampling, we can weight selections by how frequently each transition occurs:
+
+```{r unigram_weighted}
+set.seed(5073)
+
+# Same initialization as before
+current <- '.'
+result <- '.'
+keep_going <- TRUE
+
+while(keep_going == TRUE) {
+  
+  # KEY DIFFERENCE: Weight selection by frequency count
+  next_word <- transitions |> 
+    filter(word == as.character(current)) |>  # Find all possible next words
+    slice_sample(n = 1, weight_by = n) |>     # Sample proportional to count 'n'
+    select(next_word)
+  
+  # Same text building process
+  result <- str_c(result, ' ', next_word)
+  current <- next_word
+  
+  # Same stopping conditions
+  n_current <- sum(transitions$word == as.character(current))
+  keep_going <- ifelse(n_current == 0, FALSE,
+                       ifelse(nchar(result) < 140, TRUE, 
+                              ifelse(str_detect(current, '\\.'), FALSE, TRUE)))
+}
+
+result
+```
+
+Key improvement: `weight_by = n`
+
+- Before: All possible next words had equal probability (uniform random)
+- After: Words that appeared more often in training data are more likely to be selected
+- Example: If "the" is followed by "best" 100 times and "worst" 5 times, "best" is 20x more likely to be chosen
+- Result: More natural-sounding text because common phrases are preserved
+
+Why it's still imperfect: Single-word context is limited - "the" could be followed by many different words depending on what came before it
+
+## Model 3: Bigram Model
+
+Bigram models consider two-word context, potentially generating more coherent text:
+
+### Preparing Bigram Transitions
+
+```{r bigram_prep}
+# Step 1: Create bigrams from our word-by-word data
+bigrams_wstop <- tidy_tweets_wstop |> 
+  # Remove rows where either word or next_word is missing
+  filter(!is.na(word) & !is.na(next_word)) |>  
+  
+  # Combine word and next_word into single bigram column
+  unite(bigram, word, next_word, sep = ' ') |>  # "hello" + "world" = "hello world"
+  
+  # Create next_bigram by looking ahead 2 positions
+  mutate(next_bigram = lead(bigram, 2))         # Skip ahead to get overlapping bigrams
+
+# Step 2: Count transitions between bigrams
+bigram_transitions <- bigrams_wstop |> 
+  # Only keep rows where both current and next bigram exist
+  filter(!is.na(bigram) & !is.na(next_bigram)) |> 
+  
+  # Count how often each bigram is followed by each other bigram
+  group_by(bigram, next_bigram) |> 
+  count() |>                    # Count frequency of each bigram -> next_bigram transition
+  arrange(desc(n)) |>           # Most common transitions first
+  ungroup()
+
+bigram_transitions
+```
+
+What this creates:
+
+- Bigram sequences: Instead of single words, we now work with two-word phrases
+- Example transformation: 
+  - Original: `"I love data science"`
+  - Bigrams: `"I love"` $\to$ `"love data"` $\to$ `"data science"`
+  - Transitions: `("I love", "love data")`, `("love data", "data science")`
+- Increased context: Each prediction now considers the previous two words instead of just one
+- Lead by 2: We skip ahead by 2 positions because bigrams overlap (word 1-2, then word 2-3, then word 3-4...)
+
+Why bigrams help: Two-word context captures more meaningful phrases like "data science" or "machine learning"
+
+### Selecting Starting Bigrams
+
+```{r starting_bigrams}
+set.seed(5073)
+
+# Step 1: Extract the first bigram from each tweet
+start_bigrams <- bigrams_wstop |> 
+  # Group tweets individually
+  group_by(id_str) |> 
+  # Take only the first row (first bigram) from each tweet
+  slice_head(n = 1) |>    # This gives us natural sentence starters
+  ungroup()
+
+# Step 2: Randomly select one starting bigram for our generation
+current <- start_bigrams |> 
+  slice_sample(n = 1) |>        # Pick one starting bigram at random
+  select(bigram) |>             # Extract just the bigram text
+  as.character()                # Convert to character string
+
+current
+```
+
+**Why we need starting bigrams:**
+- **Problem**: We can't start with just "." like in unigram model because periods are part of bigrams
+- **Solution**: Use actual sentence-starting bigrams from the training data
+- **Examples of starting bigrams**: `"I think"`, `"The media"`, `"We need"`, etc.
+- **Benefit**: Generated text begins with natural sentence starters, improving overall coherence
+
+**What `slice_head(n = 1)` does**: Takes the first bigram from each tweet, giving us a collection of natural ways to start sentences
+
+### Bigram Text Generation
+
+```{r bigram_generation}
+# Step 1: Initialize generation with our selected starting bigram
+result <- current        # Start with the chosen beginning bigram
+keep_going <- TRUE
+
+# Step 2: Generate text by chaining bigrams together
+while(keep_going == TRUE) {
+  
+  # Step 2a: Find all bigrams that can follow the current bigram
+  next_bigram <- bigram_transitions |> 
+    filter(bigram == as.character(current)) |>    # Find rows matching current bigram
+    slice_sample(n = 1, weight_by = n) |>         # Select next bigram proportional to frequency
+    select(next_bigram)                           # Extract the selected next bigram
+  
+  # Step 2b: Add the new bigram to our result
+  result <- str_c(result, ' ', next_bigram)      # Concatenate current result + space + new bigram
+  current <- next_bigram                         # Update current bigram for next iteration
+  
+  # Step 2c: Check if current bigram has any possible continuations
+  n_current <- sum(bigram_transitions$bigram == as.character(current))
+  
+  # Step 2d: Apply stopping conditions
+  keep_going <- ifelse(n_current == 0, FALSE,                      # Stop if no transitions found
+                       ifelse(nchar(result) < 140, TRUE,           # Continue if under character limit
+                              ifelse(str_detect(current, '\\.'), FALSE, TRUE)))  # Stop if bigram contains period
+}
+
+result
+```
+
+Bigram generation walkthrough:
+
+1. Start: Begin with a natural sentence-starting bigram (e.g. `"I think"`)
+2. Lookup: Find all bigrams that historically followed `"I think"` in training data
+3. Select: Choose next bigram weighted by frequency (e.g. `"I think"` $\to$ `"think we"`)
+4. Chain: Add `"think we"` to result, making current state `"think we"`
+5. Repeat: Now find what follows `"think we"`, select `"we should"`, etc.
+6. Stop: Continue until hitting a period-containing bigram or length limit
+
+Why bigrams are better:
+
+- More context: Decisions based on two words instead of one
+- Better phrases: Preserves common two-word combinations
+- Improved coherence: Generated text flows more naturally
+- Still has limitations: Even two-word context can't capture long-range dependencies
+
+## Model Comparison and Improvements
+
+### Current Limitations
+
+1. Character limit handling: Models generate text longer than 140 characters
+2. Context window: Even bigrams have limited context
+3. Repetition: Models may get stuck in loops
+4. Coherence: Generated text lacks long-range coherence
+
+### Potential Enhancements
+
+```{r improvements, eval=FALSE}
+# Example: Character limit-aware generation
+generate_tweet <- function(max_chars = 140) {
+  # Implementation that stops before exceeding limit
+  # and handles sentence boundaries intelligently
+}
+
+# Example: Adding smoothing for unseen transitions
+smooth_transitions <- function(transitions, alpha = 0.1) {
+  # Add small probability mass to unseen transitions
+  # Prevents generation from getting stuck
+}
+
+# Example: Higher-order n-gram models
+create_trigram_model <- function(text_data) {
+  # Build trigram transition matrices
+  # Provides more context for generation
+}
+```
+
+## Key Functions and Concepts
+
+| Function/Concept | Purpose | Usage |
+|------------------|---------|--------|
+| `lead()` | Shift values forward | Create next-word relationships |
+| `slice_sample()` | Random sampling | Select transitions (weighted or unweighted) |
+| `weight_by` | Probability weighting | Make common transitions more likely |
+| `unite()` | Combine columns | Create bigrams from word pairs |
+| `str_detect()` | Pattern matching | Check for stopping conditions |
+| Transition matrix | Probability model | Maps current state to next state probabilities |
+| Weighted sampling | Selection method | Choose based on frequency, not uniform random |
+
+## Applications and Extensions
+
+Real-world applications:
+
+- Chatbots: Generate contextual responses
+- Content creation: Draft initial text for editing
+- Style transfer: Generate text in specific author's style
+- Data augmentation: Create training data for other NLP tasks
+
+
+
+# Summary Table of Key Functions
+
+| Function            | Purpose                              |
+|---------------------|--------------------------------------|
+| `pivot_longer()`    | Transform wide data into long format |
+| `pivot_wider()`     | Transform long data into wide format |
+| `unnest_tokens()`   | Split text into tokens               |
+| `str_replace_all()` | Replace text patterns using regex    |
+| `count()`           | Count occurrences of values          |
+| `filter()`          | Subset rows based on condition       |
+| `mutate()`          | Create or transform columns          |
+| `ggplot()`          | Visualization                        |
+| `wordcloud()`       | Create a word cloud                  |
+| `lead()`            | Access next value in a group         |
+
+
+# Extra Examples
+
+## Simple Unnesting of Song Lyrics
+
+```{r lyrics-example}
+lyrics <- tibble(line = c("You are my sunshine", "My only sunshine"))
+unnest_tokens(lyrics, word, line)
+```
+
+## Stop Words Removal in Reviews
+
+```{r reviews-example}
+reviews <- tibble(review = c("The movie was good but too long", "Not good at all"))
+
+# Before removing stop words
+reviews %>%
+  unnest_tokens(word, review)
+
+# After removing stop words
+reviews %>%
+  unnest_tokens(word, review) %>% 
+  filter(!word %in% stop_words$word)
+```
+
+# Key Takeaways
+
+* Tidy text mining integrates well with the `tidyverse`, making workflows consistent and reproducible.
+* Tokenization is the foundation of most text mining tasks.
+* Stop word removal and text cleaning are crucial before deeper analysis.
+* N-grams capture context that single words cannot.
+* Even simple probabilistic models like Markov chains can generate interesting text-like sequences.
+
+
+## Exercises
+
+1. Make sure to read and review the R4DS chapter on tidy data, in particular the sections on  [lengthening](https://r4ds.hadley.nz/data-tidy.html#sec-pivoting) and [widening](https://r4ds.hadley.nz/data-tidy.html#widening-data) data.
+
+2. In this exercise we'll look at some frequency distributions in the book "Siddhartha" by Herman Hesse. We'll download the book from the [Project Gutenberg](https://www.gutenberg.org/) collection. The book we want has the Project Gutenberg ID "2500" (or pick another one you want to work with). To find the ID you need, either look on the Project Gutenberg site or, in R, we can make use of the **gutenbergr** package, which helps you download and process public domain books (see vignette [here](https://cran.r-project.org/web/packages/gutenbergr/vignettes/intro.html) for details).
+
+```{r}
+library(gutenbergr)
+gutenberg_metadata |> filter(title == 'Siddhartha')
+```
+
+We can read in the text of the book using **rvest** and convert it to a data frame for use in **tidytext**. The *text* variable contains the downloaded text (the novel *and* some additional information about Project Gutenberg, visit the link http://www.gutenberg.org/cache/epub/2500/pg2500.txt to see what is downloaded.
+
+```{r}
+library(rvest)
+sidd <- read_html('http://www.gutenberg.org/cache/epub/2500/pg2500.txt')
+sidd_tidy <- data.frame(id = 1, text = html_text(html_nodes(sidd, css='body')))
+```
+
+Use `unnest_tokens()` to plot a frequency distribution of words used in the novel. Arrange the histogram so that words appear from left to right in order of their frequency of occurence. What do you find? Word frequency distributions often follow the same form, see the section of TMR on ["Zipf's law"](http://tidytextmining.com/tfidf.html#zipfs-law) for details. 
+
+3.  Using the same data as above, and a different call to `unnest_tokens()`, plot the distribution of sentence lengths in *Siddhartha*.
+
+4. How might you improve the tweet generator so that the sentences that it generates are not entirely independent of one another?
+
+
+
+
+
+
+
+
+*Note: Some code chunks are set to `eval=FALSE` because they require the Trump tweets dataset. Replace with your own data or set to `eval=TRUE` if you have the required data files.*
+
+
+
+
+
+# Little example
+
+```{r}
+review2 <- tibble(
+  review_id = c(1, 2),
+  review = c("I loved the movie.", "It was boring."))
+
+review2
+
+# Tokenize
+tidy_review2 <- reviews %>% unnest_tokens(word, review, token = "words", to_lower = TRUE) 
+tidy_review2
+
+# Remove stop words
+tidy_review2 <- tidy_reviews %>% filter(!word %in% stop_words$word)
+tidy_review2
+
+```
+
+
+

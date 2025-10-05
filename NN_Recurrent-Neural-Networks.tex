@@ -1,0 +1,1230 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+%
+\documentclass[
+]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{color}
+\usepackage{fancyvrb}
+\newcommand{\VerbBar}{|}
+\newcommand{\VERB}{\Verb[commandchars=\\\{\}]}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{commandchars=\\\{\}}
+% Add ',fontsize=\small' for more characters per line
+\usepackage{framed}
+\definecolor{shadecolor}{RGB}{248,248,248}
+\newenvironment{Shaded}{\begin{snugshade}}{\end{snugshade}}
+\newcommand{\AlertTok}[1]{\textcolor[rgb]{0.94,0.16,0.16}{#1}}
+\newcommand{\AnnotationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\AttributeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\BaseNTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\BuiltInTok}[1]{#1}
+\newcommand{\CharTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\CommentTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\CommentVarTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ConstantTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\ControlFlowTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\DataTypeTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{#1}}
+\newcommand{\DecValTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\DocumentationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\ErrorTok}[1]{\textcolor[rgb]{0.64,0.00,0.00}{\textbf{#1}}}
+\newcommand{\ExtensionTok}[1]{#1}
+\newcommand{\FloatTok}[1]{\textcolor[rgb]{0.00,0.00,0.81}{#1}}
+\newcommand{\FunctionTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\ImportTok}[1]{#1}
+\newcommand{\InformationTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\newcommand{\KeywordTok}[1]{\textcolor[rgb]{0.13,0.29,0.53}{\textbf{#1}}}
+\newcommand{\NormalTok}[1]{#1}
+\newcommand{\OperatorTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\OtherTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{#1}}
+\newcommand{\PreprocessorTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textit{#1}}}
+\newcommand{\RegionMarkerTok}[1]{#1}
+\newcommand{\SpecialCharTok}[1]{\textcolor[rgb]{0.81,0.36,0.00}{\textbf{#1}}}
+\newcommand{\SpecialStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\StringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\VariableTok}[1]{\textcolor[rgb]{0.00,0.00,0.00}{#1}}
+\newcommand{\VerbatimStringTok}[1]{\textcolor[rgb]{0.31,0.60,0.02}{#1}}
+\newcommand{\WarningTok}[1]{\textcolor[rgb]{0.56,0.35,0.01}{\textbf{\textit{#1}}}}
+\usepackage{longtable,booktabs,array}
+\usepackage{calc} % for calculating minipage widths
+% Correct order of tables after \paragraph or \subparagraph
+\usepackage{etoolbox}
+\makeatletter
+\patchcmd\longtable{\par}{\if@noskipsec\mbox{}\fi\par}{}{}
+\makeatother
+% Allow footnotes in longtable head/foot
+\IfFileExists{footnotehyper.sty}{\usepackage{footnotehyper}}{\usepackage{footnote}}
+\makesavenoteenv{longtable}
+\usepackage{graphicx}
+\makeatletter
+\def\maxwidth{\ifdim\Gin@nat@width>\linewidth\linewidth\else\Gin@nat@width\fi}
+\def\maxheight{\ifdim\Gin@nat@height>\textheight\textheight\else\Gin@nat@height\fi}
+\makeatother
+% Scale images if necessary, so that they will not overflow the page
+% margins by default, and it is still possible to overwrite the defaults
+% using explicit options in \includegraphics[width, height, ...]{}
+\setkeys{Gin}{width=\maxwidth,height=\maxheight,keepaspectratio}
+% Set default figure placement to htbp
+\makeatletter
+\def\fps@figure{htbp}
+\makeatother
+\usepackage{svg}
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\ifLuaTeX
+  \usepackage{selnolig}  % disable illegal ligatures
+\fi
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+\hypersetup{
+  pdftitle={Recurrent neural networks},
+  pdfauthor={Hope Hennessy},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Recurrent neural networks}
+\author{Hope Hennessy}
+\date{2025-09-26}
+
+\begin{document}
+\maketitle
+
+\begin{itemize}
+\tightlist
+\item
+  Feedforward Neural Networks (FFNNs)
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Treat each input independently; they do not consider the order or
+    context of inputs.
+  \item
+    Works on fixed-size, static inputs.
+  \item
+    Fast to train and simple.
+  \item
+    Cannot model sequences or temporal dependencies.
+  \item
+    Use cases: tabular data, single-image classification.
+  \end{itemize}
+\item
+  Convolutional Neural Networks (CNNs)
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Detects local spatial/temporal patterns using filters.
+  \item
+    Good for grid-like or structured data (images, short sequences).
+  \item
+    Good for short-term dependencies (e.g.~local trends) but struggle
+    with long-term dependencies such as yearly seasonality.
+  \item
+    Highly parallelizable
+  \item
+    Use cases: images, short-term time series, audio feature extraction.
+  \end{itemize}
+\item
+  Recurrent Neural Networks (RNNs)
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Maintains a hidden state (memory) that evolves over time \(\to\)
+    allowing predictions to depend on the entire history of inputs seen
+    so far.
+  \item
+    Designed for sequential and time-dependent data.
+  \item
+    Harder to parallelize; vanilla RNNs suffer from vanishing/exploding
+    gradients.
+  \item
+    Use cases: language modeling, translation, speech recognition,
+    forecasting, anomaly detection.
+  \end{itemize}
+\end{itemize}
+
+\section{Recurrent Neural Networks
+(RNNs)}\label{recurrent-neural-networks-rnns}
+
+\subsection{Mathematical Foundation}\label{mathematical-foundation}
+
+The core RNN equations define how information flows through time:
+
+\[\begin{aligned}
+h_t &= f\!\left(W_{xh}x_t + W_{hh}h_{t-1} + b_h\right) \\
+y_t \ \text{or}\ \hat{x}_{t+1} &= g\!\left(W_{hy}h_t + b_y\right)
+\end{aligned}\]
+
+\begin{itemize}
+\tightlist
+\item
+  \(W_{xh} \in \mathbb{R}^{d_h\times d_x}\): Input-to-hidden weight
+  matrix - determines how the current input \(x_{t}\) affects the hidden
+  state.
+\item
+  \(W_{hh} \in \mathbb{R}^{d_h\times d_h}\): Hidden-to-hidden weight
+  matrix - controls how information from the past is retained
+  (``memory'').
+\item
+  \(W_{hy} \in \mathbb{R}^{d_y\times d_h}\): Hidden-to-output weight
+  matrix - converts the hidden state to output/predictions
+\item
+  \(f(\cdot)\): Activation function (typically tanh or ReLU)
+\item
+  \(g(\cdot)\): Output activation (depends on task: linear for
+  regression, softmax for classification)
+\end{itemize}
+
+\textbf{Forecasting Convention}: For time series prediction, we use
+\(\hat{x}_{t+1} = g(W_{hy}h_t + b_y)\) to predict the next value in the
+sequence.
+
+\subsubsection{Single RNN Cell
+Architecture}\label{single-rnn-cell-architecture}
+
+The internal structure of a single RNN cell at time step t:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{knitr}\SpecialCharTok{::}\FunctionTok{include\_graphics}\NormalTok{(}\StringTok{"rnn\_block.png"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+\begin{itemize}
+\tightlist
+\item
+  Input: \(x_t\) (current time step input)
+\item
+  Previous hidden state: \(h_{t-1}\) (memory from previous time step)
+\item
+  Current hidden state: \(h_t\) (output of current cell)
+\item
+  Final output: \(y_t\) (prediction or output at time t)
+\end{itemize}
+
+Operations:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  \(W_{xh} \otimes x_t\): Input transformation - the input \(x_t\) is
+  multiplied by weight matrix \(W_{xh}\)
+\item
+  \(W_{hh} \otimes h_{t-1}\): Hidden state transformation - previous
+  hidden state \(h_{t-1}\) is multiplied by recurrent weight matrix
+  \(W_{hh}\)
+\item
+  \(+ b_h\): Bias addition - bias term is added to the sum
+\item
+  tanh: Activation function applied to create new hidden state \(h_t\)
+\item
+  \(W_{hy} \otimes h_t\): Output transformation - hidden state is
+  transformed to produce output \(y_t\)
+\end{enumerate}
+
+Mathematical representation:
+
+\(h_t = tanh(W_xh * x_t + W_hh * h_{t-1} + b_h)\) \(y_t = W_hy * h_t\)
+
+The gray box emphasizes the core recurrent computation that creates the
+memory mechanism.
+
+\subsubsection{RNN block unfolded through
+time}\label{rnn-block-unfolded-through-time}
+
+RNN block unfolded through time, revealing the sequential computation:
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{knitr}\SpecialCharTok{::}\FunctionTok{include\_graphics}\NormalTok{(}\StringTok{"rnn\_unfold.png"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+Left side (Folded):
+
+\begin{itemize}
+\tightlist
+\item
+  Shows the compact representation with the recurrent loop
+\item
+  The circular arrow represents the temporal connection
+\item
+  Parameters U, V, W represent the weight matrices
+\end{itemize}
+
+Right side (Unfolded):
+
+\begin{itemize}
+\tightlist
+\item
+  Shows the same network expanded across time steps: t−1, t, t+1, etc.
+\item
+  Each blue box represents the same RNN cell applied at different time
+  steps
+\item
+  Key insight: The same parameters (U, V, W) are shared across all time
+  steps
+\end{itemize}
+
+Information flow:
+
+\begin{itemize}
+\tightlist
+\item
+  Horizontal arrows: Hidden states flowing forward in time
+  \(h_{t-1} \to h_t \to h_{t+1}\)
+\item
+  Upward arrows: Outputs at each time step \(o_{t-1}, o_t, o_{t+1}\)
+\item
+  Input connections: Each time step receives its own input
+  \(x_{t-1}, x_t, x_{t+1}\)
+\end{itemize}
+
+Why unfolding matters:
+
+\begin{itemize}
+\tightlist
+\item
+  Training: Backpropagation through time (BPTT) operates on this
+  unfolded graph
+\item
+  Memory: Shows how information can flow across multiple time steps
+\item
+  Parameter sharing: Demonstrates that the same weights are used at
+  every time step
+\item
+  Sequential processing: Illustrates the inherent sequential nature of
+  RNN computation
+\end{itemize}
+
+\subsection{\texorpdfstring{Hidden-to-Hidden Matrix
+\(W_{hh}\)}{Hidden-to-Hidden Matrix W\_\{hh\}}}\label{hidden-to-hidden-matrix-w_hh}
+
+The eigenvalues \(\lambda_i\) of \(W_{hh}\) control how past states
+\(h_0\) affect \(h_t\) over time.
+
+\begin{itemize}
+\tightlist
+\item
+  Small eigenvalues (\(|\lambda| < 1\)) \(\to\) memory fades quickly;
+  past inputs have little influence.
+\item
+  Eigenvalues near 1 \(\to\) information persists, like a clock or
+  moving average.
+\item
+  Rotational matrices (eigenvalues on unit circle) \(\to\) produce
+  oscillations or periodic patterns.
+\item
+  Large eigenvalues (\(|\lambda| > 1\)) \(\to\) risk of exploding
+  states, causing instability in training.
+\item
+  Properly chosen \(W_{hh}\) can capture temporal patterns: decays,
+  cycles, or oscillations.
+\end{itemize}
+
+\subsection{Simple numerical example}\label{simple-numerical-example}
+
+\begin{itemize}
+\tightlist
+\item
+  State update (simplified, no bias or activation):
+  \(h_t = W_{hh}h_{t-1} + W_{xh}x_t\)
+\item
+  One step ahead forecast: \(\hat{x}_{t+1} = W_{hy}h_t\)
+\item
+  Consider scalar input/output \(x_t\), \(\hat{x}_{t+1}\), hidden state
+  \(h_t \in \mathbb{R}^2\):
+\item
+  Matrix sizes: \(W_{xh}\) is \(2\times 1\), \(W_{hh}\) is
+  \(2\times 2\), \(W_{hy}\) is \(1\times 2\).
+\end{itemize}
+
+\subsection{(a) Weighted Moving
+Average}\label{a-weighted-moving-average}
+
+\[W_{hh}=\begin{bmatrix}0.75 & 0\\ 0 & 0\end{bmatrix},\quad
+W_{xh}=\begin{bmatrix}0.25\\ 0\end{bmatrix},\quad
+W_{hy}=\begin{bmatrix}1 & 0\end{bmatrix}.\]
+
+Then
+
+\begin{itemize}
+\tightlist
+\item
+  \(h_{t,1} = 0.75\,h_{t-1,1} + 0.25\,x_t\) (exponential smoothing with
+  \(\alpha\) = 0.25)
+\item
+  \(h_{t,2} = 0\) (unused dimension)
+\item
+  \(\hat{x}_{t+1} = h_{t,1}\) (direct readout of smoothed state)
+\end{itemize}
+
+This creates a classic exponential moving average with decay factor
+0.75, commonly used in financial analysis and signal processing.
+
+\subsection{(a) Weighted Moving Average via
+RNN}\label{a-weighted-moving-average-via-rnn}
+
+Input sequence \(x = [0,0,0,5,0,0,0,5,0]\), with initial state
+\(h_0=[0,0]^\top\).
+
+\begin{longtable}[]{@{}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2222}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2222}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.1667}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2222}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.1667}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedleft
+\(t\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+\(x_t\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\(h_t^\top\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+\(\hat{x}_{t+1}\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Interpretation
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+1 & 0 & \([0.000,\ 0.000]\) & \(0.0000\) & No signal yet \\
+2 & 0 & \([0.000,\ 0.000]\) & \(0.0000\) & Still quiet \\
+3 & 0 & \([0.000,\ 0.000]\) & \(0.0000\) & Baseline \\
+4 & 5 & \([1.250,\ 0.000]\) & \(\mathbf{1.2500}\) & \textbf{Spike
+detected, predicting echo} \\
+5 & 0 & \([0.9375,\ 0.000]\) & \(0.9375\) & Exponential decay begins \\
+6 & 0 & \([0.7031,\ 0.000]\) & \(0.7031\) & Continued decay \\
+7 & 0 & \([0.5273,\ 0.000]\) & \(0.5273\) & Memory fading \\
+8 & 5 & \([1.6455,\ 0.000]\) & \(\mathbf{1.6455}\) & \textbf{Second
+spike, stronger prediction} \\
+9 & 0 & \([1.2341,\ 0.000]\) & \(1.2341\) & New decay cycle \\
+\end{longtable}
+
+The weighted movinf average provides a reactive forecasting approach,
+predicting based on recent weighted history.
+
+\subsection{(b) 4-Step Cycle}\label{b-4-step-cycle}
+
+\[W_{hh}=\begin{bmatrix}0 & -1\\ 1 & 0\end{bmatrix},\quad
+W_{xh}=\begin{bmatrix}1/5\\ 0\end{bmatrix},\quad
+W_{hy}=\begin{bmatrix}0 & -5\end{bmatrix}.\]
+
+Then
+
+\begin{itemize}
+\tightlist
+\item
+  \(h_{t,1} = -\,h_{t-1,2} + \tfrac{1}{5} x_t\)
+\item
+  \(h_{t,2} = h_{t-1,1}\)
+\item
+  \(\hat{x}_{t+1} = W_{hy}\,h_t = -5\,h_{t,2}\)
+\end{itemize}
+
+Rotates the hidden state \(90^\circ\) each step \(\to\) generates
+periodic behavior.
+
+\subsection{(b) 4-Step Cycle}\label{b-4-step-cycle-1}
+
+Inputs \(x=[0,0,0,5,\,0,0,0,5,\,0]\). Initialize \(h_0=[1,0]^\top\).
+
+\begin{longtable}[]{@{}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2222}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2222}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.1667}}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2222}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.1667}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedleft
+\(t\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+\(x_t\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\(h_t^\top\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedleft
+\(\hat{x}_{t+1}\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+\textbf{Phase}
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+1 & 0 & \([0,\ 1]\) & \(-5.0\) & 90° \\
+2 & 0 & \([-1,\ 0]\) & \(0.0\) & 180° \\
+\textbf{3} & 0 & \([0,\ \mathbf{-1}]\) & \textbf{\(\mathbf{5.0}\)} &
+\textbf{270° - Prediction phase} \\
+4 & 5 & \([2,\ 0]\) & \(0.0\) & 0° (reset + input) \\
+5 & 0 & \([0,\ 2]\) & \(-10.0\) & 90° \\
+6 & 0 & \([-2,\ 0]\) & \(0.0\) & 180° \\
+\textbf{7} & 0 & \([0,\ \mathbf{-2}]\) & \textbf{\(\mathbf{10.0}\)} &
+\textbf{270° - Prediction phase} \\
+8 & 5 & \([3,\ 0]\) & \(0.0\) & 0° (reset + input) \\
+\end{longtable}
+
+\begin{itemize}
+\tightlist
+\item
+  \(W_{hh}\) rotates by \(90^\circ\) each step (period 4).
+\item
+  Spike inputs to \textbf{re-sync} phase
+\item
+  Output reads pre-spike phase
+\item
+  Linear readout gives a sinusoidal score; gates/thresholds would help
+  remove the bottom trough.
+\end{itemize}
+
+\subsection{(c) 12-Step Cycle}\label{c-12-step-cycle}
+
+\[
+W_{hh}=\begin{bmatrix}\cos 30^\circ & -\sin 30^\circ\\ \sin 30^\circ & \cos 30^\circ\end{bmatrix},\quad
+W_{xh}=\begin{bmatrix}1/5\\ 0\end{bmatrix},\quad
+W_{hy}=\begin{bmatrix}\cos 330^\circ & \sin 330^\circ\end{bmatrix}.
+\]
+
+Then
+
+\begin{itemize}
+\tightlist
+\item
+  \(h_{t,1} = \cos 30^\circ \, h_{t-1,1} \;-\; \sin 30^\circ \, h_{t-1,2} \;+\; \tfrac{1}{5}\,x_t\)
+\item
+  \(h_{t,2} = \sin 30^\circ \, h_{t-1,1} \;+\; \cos 30^\circ \, h_{t-1,2}\)
+\item
+  \(s_t = W_{hy} h_t \;=\; \cos 330^\circ \, h_{t,1} \;+\; \sin 330^\circ \, h_{t,2}\)
+\item
+  \(\hat{x}_{t+1} = g(s_t), \quad g(s) = \max(0, 100\,(s-0.95))\)
+\end{itemize}
+
+\subsection{(c) 12-Step Cycle}\label{c-12-step-cycle-1}
+
+\begin{longtable}[]{@{}
+  >{\raggedleft\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.0476}}
+  >{\centering\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.1905}}
+  >{\centering\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.3452}}
+  >{\centering\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2024}}
+  >{\centering\arraybackslash}p{(\columnwidth - 8\tabcolsep) * \real{0.2143}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedleft
+t
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+phase
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+\(h_t\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+\(W_{hy}h_t\)
+\end{minipage} & \begin{minipage}[b]{\linewidth}\centering
+\(\hat{x}_{t+1}\)
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+0 & \(0^\circ\) & {[}1.000, 0.000{]} & 0.866 & 0.0 \\
+1 & \(30^\circ\) & {[}0.866, 0.500{]} & 0.500 & 0.0 \\
+2 & \(60^\circ\) & {[}0.500, 0.866{]} & 0.000 & 0.0 \\
+3 & \(90^\circ\) & {[}0.000, 1.000{]} & −0.500 & 0.0 \\
+4 & \(120^\circ\) & {[}−0.500, 0.866{]} & −0.866 & 0.0 \\
+5 & \(150^\circ\) & {[}−0.866, 0.500{]} & −1.000 & 0.0 \\
+6 & \(180^\circ\) & {[}−1.000, 0.000{]} & −0.866 & 0.0 \\
+7 & \(210^\circ\) & {[}−0.866, −0.500{]} & −0.500 & 0.0 \\
+8 & \(240^\circ\) & {[}−0.500, −0.866{]} & 0.000 & 0.0 \\
+9 & \(270^\circ\) & {[}0.000, −1.000{]} & 0.500 & 0.0 \\
+10 & \(300^\circ\) & {[}0.500, −0.866{]} & 0.866 & 0.0 \\
+11 & \(330^\circ\) & {[}\textbf{0.866, −0.500}{]} & \textbf{1.000} &
+\textbf{5.0} \\
+12 & \(360^\circ\) & {[}1.000, 0.000{]} & 0.866 & 0.0 \\
+\end{longtable}
+
+\begin{itemize}
+\tightlist
+\item
+  The hidden state rotates steadily around the unit circle.\\
+\item
+  The raw score \(s_t=W_{hy}h_t\) is just a cosine wave, peaking when
+  \(h_t\) reaches the pre-spike phase (330°).\\
+\item
+  The nonlinearity \(g(s)\) converts this smooth score into a sharp
+  forecast spike at \(t=11\).\\
+\item
+  At \(t=12\), the observed spike resets the hidden state to
+  \([1,0]^T\), ready for the next cycle.
+\end{itemize}
+
+\subsection{EMA vs Clock}\label{ema-vs-clock}
+
+\includesvg{ema_vs_clock.svg}
+
+\begin{itemize}
+\tightlist
+\item
+  EMA captures decaying average of past inputs.
+\item
+  Clock/oscillator approach anticipates periodic events by tracking
+  phase.
+\end{itemize}
+
+\section{Training RNNs}\label{training-rnns}
+
+\subsection{Backpropagation Through Time
+(BPTT)}\label{backpropagation-through-time-bptt}
+
+Idea: Unroll the RNN across all timesteps and apply standard
+backpropagation.
+
+For sequence of length \(T\), loss \(L=\sum_{t=1}^T \ell_t\),
+
+\[
+\frac{\partial L}{\partial \theta} \;=\; \sum_{t=1}^T \frac{\partial L}{\partial h_t}\frac{\partial h_t}{\partial \theta}
+\quad\text{with}\quad
+\frac{\partial L}{\partial h_{t-1}} \;=\; \frac{\partial L}{\partial h_t}\, \underbrace{\frac{\partial h_t}{\partial h_{t-1}}}_{J_t}.
+\]
+
+\begin{itemize}
+\item
+  \(J_t = \partial h_t/\partial h_{t-1}\) controls gradient flow across
+  time.\\
+\item
+  Over \(k\) steps, gradients accumulate products
+  \(J_t J_{t-1}\cdots J_{t-k+1}\).
+\item
+  If \(\|J_t\|\approx \lambda\), then across \(k\) steps the product
+  scales as \(\lambda^k\).
+\item
+  Gives rise to problem of exploding or vanishing gradients
+\item
+  Vanishing: \(\lambda = 0.9 \Rightarrow 0.9^{50}\approx 0.005\), so
+  early timesteps contribute almost nothing.\\
+\item
+  Exploding: \(\lambda = 1.1 \Rightarrow 1.1^{50}\approx 117\), so
+  unstable updates.
+\item
+  Other kinds of RNN units (LSTM/GRU) help avoid this by ``gating''
+\end{itemize}
+
+\subsection{LSTM}\label{lstm}
+
+\[
+\begin{aligned}
+i_t &= \sigma(W_{xi}x_t + W_{hi}h_{t-1} + b_i) \\
+f_t &= \sigma(W_{xf}x_t + W_{hf}h_{t-1} + b_f) \\
+o_t &= \sigma(W_{xo}x_t + W_{ho}h_{t-1} + b_o) \\
+\tilde{c}_t &= \tanh(W_{xc}x_t + W_{hc}h_{t-1} + b_c) \\
+c_t &= f_t \odot c_{t-1} + i_t \odot \tilde{c}_t \\
+h_t &= o_t \odot \tanh(c_t)
+\end{aligned}
+\]
+
+Input gate \(i_t\), forget gate \(f_t\), output gate \(o_t\).
+
+\[
+\begin{aligned}
+c_t &= f_t \odot c_{t-1} + i_t \odot \tilde{c}_t \\
+h_t &= o_t \odot \tanh(c_t)
+\end{aligned}
+\]
+
+An LSTM has \textbf{two hidden vectors} at each step:
+
+\begin{itemize}
+\tightlist
+\item
+  \(h_t\): the hidden state / output\\
+\item
+  \(c_t\): the cell state / long-term memory track
+\end{itemize}
+
+\[
+\begin{aligned}
+c_t &= f_t \odot c_{t-1} + i_t \odot \tilde{c}_t \\
+h_t &= o_t \odot \tanh(c_t)
+\end{aligned}
+\]
+
+\begin{itemize}
+\tightlist
+\item
+  \(i_t\) controls how much of \(\tilde{c}_t\) is allowed into \(c_t\).
+\item
+  \(f_t\) controls how much of \(c_{t-1}\) is retained vs.~discarded.
+\item
+  \(o_t\) controls how much of \(\tanh(c_t)\) is retained.
+\end{itemize}
+
+\subsubsection{The Forget Gate}\label{the-forget-gate}
+
+\(f_t\) controls how much of \(c_{t-1}\) is carried forward.
+
+\[f_t = \sigma(W_{xf}x_t + W_{hf}h_{t-1} + b_f)\]
+
+\begin{itemize}
+\item
+  \(W_{xf}\): how current input \(x_t\) influences forgetting.\\
+\item
+  \(W_{hf}\): how past hidden state \(h_{t-1}\) influences forgetting.\\
+\item
+  \(\sigma(\cdot)\) squashes values into \([0,1]\).
+\item
+  \(f_{t,i} \approx 1\): keep the \(i\)-th cell's past memory.\\
+\item
+  \(f_{t,i} \approx 0\): forget (wipe out) the \(i\)-th cell's past
+  memory.
+\end{itemize}
+
+\subsubsection{The Input Gate}\label{the-input-gate}
+
+\(i_t\) controls how much of \(\tilde{c}_t\) to admit.
+
+\[
+\begin{aligned}
+i_t & = \sigma(W_{xi}x_t + W_{hi}h_{t-1} + b_i) \\
+\tilde{c}_t &= \tanh(W_{xc}x_t + W_{hc}h_{t-1} + b_c)
+\end{aligned}
+\]
+
+\begin{itemize}
+\tightlist
+\item
+  \(W_{xi}, W_{hi}\): decide where new info should be written.\\
+\item
+  \(W_{xc}, W_{hc}\): transform input and hidden state into a candidate
+  content vector.
+\end{itemize}
+
+\subsubsection{Updating the Cell State}\label{updating-the-cell-state}
+
+Now combine forget and input:
+
+\[
+c_t = f_t \odot c_{t-1} + i_t \odot \tilde{c}_t
+\]
+
+This equation is the core of the LSTM:
+
+\begin{itemize}
+\tightlist
+\item
+  \(f_t \odot c_{t-1}\) carries over past memory where \(f_t\) says
+  so.\\
+\item
+  \(i_t \odot \tilde{c}_t\) adds new content where \(i_t\) allows.\\
+  Updating \(c_t\) is updated by addition rather than full replacement
+  avoids vanishing/exploding gradients.
+\end{itemize}
+
+\subsubsection{The Output Gate}\label{the-output-gate}
+
+\(o_t\) decides how much of \(c_t\) is exposed.
+
+\[
+\begin{aligned}
+o_t &= \sigma(W_{xo}x_t + W_{ho}h_{t-1} + b_o) \\
+h_t &= o_t \odot \tanh(c_t)
+\end{aligned}
+\]
+
+\begin{itemize}
+\tightlist
+\item
+  \(\tanh(c_t)\) squashes the cell state to \([-1,1]\) before
+  exposing.\\
+\item
+  \(h_t\) is then fed forward to the next step.
+\end{itemize}
+
+\subsection{Summary}\label{summary}
+
+At each time step:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Forget gate (\(f_t\)) decides what old info to erase.\\
+\item
+  Input gate (\(i_t\) + \(\tilde{c}_t\)) decides what new info to add.\\
+\item
+  Cell state update combines old and new:
+  \(c_t = f_t \odot c_{t-1} + i_t \odot \tilde{c}_t\).
+\item
+  Output gate (\(o_t\)) decides what part of \(c_t\) becomes visible in
+  \(h_t\).
+\end{enumerate}
+
+\subsection{Gated Recurrent Units
+(GRUs)}\label{gated-recurrent-units-grus}
+
+\[
+\begin{aligned}
+z_t &= \sigma(W_{xz}x_t + W_{hz}h_{t-1} + b_z) \quad\text{(update)}\\
+r_t &= \sigma(W_{xr}x_t + W_{hr}h_{t-1} + b_r) \quad\text{(reset)}\\
+\tilde{h}_t &= \tanh\big(W_{xh}x_t + W_{hh}(r_t \odot h_{t-1}) + b_h\big) \\
+h_t &= (1 - z_t)\odot \tilde{h}_t + z_t \odot h_{t-1}
+\end{aligned}
+\]
+
+\begin{itemize}
+\tightlist
+\item
+  one hidden vector \(h_t\) (no separate cell state).\\
+\item
+  ``reset gate'' \(r_t\) and ``update gate'' \(z_t\).
+\end{itemize}
+
+\[h_t = (1 - z_t)\odot \tilde{h}_t + z_t \odot h_{t-1}\]
+
+\begin{itemize}
+\tightlist
+\item
+  \(z_t\) blends old vs new (acts like \(f_t\)/\(i_t\) combo).
+\item
+  If \(z_t \approx 1\): keep old \(h_{t-1}\).\\
+\item
+  If \(z_t \approx 0\): replace with candidate \(\tilde{h}_t\).
+\end{itemize}
+
+\subsubsection{The Update Gate}\label{the-update-gate}
+
+\[
+z_t = \sigma(W_{xz}x_t + W_{hz}h_{t-1} + b_z)
+\]
+
+\begin{itemize}
+\tightlist
+\item
+  \(W_{xz}\): how current input \(x_t\) influences whether to keep old
+  memory.\\
+\item
+  \(W_{hz}\): how past hidden state \(h_{t-1}\) influences this
+  decision.\\
+\item
+  \(\sigma(\cdot)\) gives values in \([0,1]\).\\
+\item
+  \(z_{t,i} \approx 1\): keep the \(i\)-th unit from the past.\\
+\item
+  \(z_{t,i} \approx 0\): replace it with a new candidate.
+\end{itemize}
+
+\subsubsection{The Reset Gate}\label{the-reset-gate}
+
+\(\tilde{h}_t\) is the \textbf{new candidate hidden state} the GRU could
+switch to:
+
+\[
+\tilde{h}_t = \tanh\!\big(W_{xh}x_t + W_{hh}(r_t \odot h_{t-1}) + b_h\big)
+\]
+
+with
+
+\[r_t = \sigma(W_{xr}x_t + W_{hr}h_{t-1} + b_r)\]
+
+controlling how much the past hidden state contributes when making a new
+candidate.
+
+\subsection{The Reset Gate}\label{the-reset-gate-1}
+
+\[
+\begin{aligned}
+\tilde{h}_t = \tanh\!\big(W_{xh}x_t + W_{hh}(r_t \odot h_{t-1}) + b_h\big)
+r_t = \sigma(W_{xr}x_t + W_{hr}h_{t-1} + b_r)
+\end{aligned}
+\]
+
+\begin{itemize}
+\tightlist
+\item
+  \(W_{xr}, W_{hr}\): decide where new info should be written.\\
+\item
+  \(W_{xh}, W_{hh}\): transform input and (reset version of last) hidden
+  state into a candidate content vector.\\
+\item
+  \(r_{t,i} \approx 0\): ignore the \(i\)-th unit of \(h_{t-1}\) when
+  building the candidate.\\
+\item
+  \(r_{t,i} \approx 1\): fully use the past hidden info.
+\end{itemize}
+
+\subsection{Summary}\label{summary-1}
+
+\begin{itemize}
+\tightlist
+\item
+  Update gate \(z_t\) weighs old memory vs.~new memory,
+\item
+  Reset gate \(r_t\) weighs past info when making a new memory,
+\item
+  \(\tilde{h}_t\) is the proposed new memory,
+\end{itemize}
+
+\section{RNN Time Series Forecasting with
+Keras}\label{rnn-time-series-forecasting-with-keras}
+
+This code demonstrates how to build and compare different RNN
+architectures (SimpleRNN, LSTM, GRU) for time series forecasting using
+Keras in R. The task involves predicting periodic spikes in a synthetic
+time series.
+
+\subsection{1. Setup and Data
+Generation}\label{setup-and-data-generation}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\FunctionTok{library}\NormalTok{(keras3)}
+\FunctionTok{set.seed}\NormalTok{(}\DecValTok{42}\NormalTok{)}
+\NormalTok{N }\OtherTok{\textless{}{-}} \DecValTok{600}
+\NormalTok{period }\OtherTok{\textless{}{-}} \DecValTok{12}
+
+\NormalTok{spikes }\OtherTok{\textless{}{-}} \FunctionTok{rep}\NormalTok{(}\FunctionTok{c}\NormalTok{(}\FunctionTok{rep}\NormalTok{(}\DecValTok{0}\NormalTok{, period}\DecValTok{{-}1}\NormalTok{), }\DecValTok{5}\NormalTok{), }\AttributeTok{length.out =}\NormalTok{ N)}
+\NormalTok{noise }\OtherTok{\textless{}{-}} \FunctionTok{rnorm}\NormalTok{(N, }\AttributeTok{sd =} \FloatTok{0.2}\NormalTok{)}
+\NormalTok{series }\OtherTok{\textless{}{-}}\NormalTok{ spikes }\SpecialCharTok{+}\NormalTok{ noise}
+\end{Highlighting}
+\end{Shaded}
+
+Purpose: Create a synthetic periodic time series with predictable
+patterns.
+
+Components:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{N\ \textless{}-\ 600}: Generate 600 time points
+\item
+  \texttt{period\ \textless{}-\ 12}: Set periodicity to 12 time steps
+  (like monthly data)
+\item
+  \texttt{spikes\ \textless{}-\ rep(c(rep(0,\ period-1),\ 5),\ length.out\ =\ N)}:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Creates pattern: \texttt{{[}0,0,0,0,0,0,0,0,0,0,0,5{]}} repeated for
+    600 points
+  \item
+    Spike of magnitude 5 every 12th time step
+  \end{itemize}
+\item
+  \texttt{noise\ \textless{}-\ rnorm(N,\ sd\ =\ 0.2)}: Add Gaussian
+  noise with standard deviation 0.2
+\item
+  \texttt{series\ \textless{}-\ spikes\ +\ noise}: Combine clean
+  periodic signal with noise
+\end{itemize}
+
+Result: A noisy time series with spikes at positions 12, 24, 36, 48,
+etc.
+
+\subsection{2. Data Preprocessing for Supervised
+Learning}\label{data-preprocessing-for-supervised-learning}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{Twin }\OtherTok{\textless{}{-}} \DecValTok{24}
+\NormalTok{X }\OtherTok{\textless{}{-}} \FunctionTok{array}\NormalTok{(}\DecValTok{0}\NormalTok{, }\AttributeTok{dim =} \FunctionTok{c}\NormalTok{(N }\SpecialCharTok{{-}}\NormalTok{ Twin, Twin, }\DecValTok{1}\NormalTok{))}
+\NormalTok{y }\OtherTok{\textless{}{-}} \FunctionTok{array}\NormalTok{(}\DecValTok{0}\NormalTok{, }\AttributeTok{dim =} \FunctionTok{c}\NormalTok{(N }\SpecialCharTok{{-}}\NormalTok{ Twin, }\DecValTok{1}\NormalTok{))}
+
+\ControlFlowTok{for}\NormalTok{ (i }\ControlFlowTok{in} \FunctionTok{seq\_len}\NormalTok{(N }\SpecialCharTok{{-}}\NormalTok{ Twin)) \{}
+\NormalTok{  X[i,,}\DecValTok{1}\NormalTok{] }\OtherTok{\textless{}{-}}\NormalTok{ series[i}\SpecialCharTok{:}\NormalTok{(i}\SpecialCharTok{+}\NormalTok{Twin}\DecValTok{{-}1}\NormalTok{)]}
+\NormalTok{  y[i,}\DecValTok{1}\NormalTok{]  }\OtherTok{\textless{}{-}}\NormalTok{ series[i}\SpecialCharTok{+}\NormalTok{Twin]}
+\NormalTok{\}}
+\end{Highlighting}
+\end{Shaded}
+
+Purpose: Transform the time series into a supervised learning problem
+using a sliding window approach.
+
+Parameters:
+
+\begin{itemize}
+\tightlist
+\item
+  \texttt{Twin\ \textless{}-\ 24}: Window size of 24 time steps (input
+  sequence length)
+\item
+  \texttt{X}: Input array with dimensions
+  \texttt{{[}samples,\ timesteps,\ features{]}}
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \texttt{samples}: N - Twin = 576 training examples
+  \item
+    \texttt{timesteps}: 24 (lookback window)
+  \item
+    \texttt{features}: 1 (univariate time series)
+  \end{itemize}
+\item
+  \texttt{y}: Output array with dimensions
+  \texttt{{[}samples,\ outputs{]}}
+\end{itemize}
+
+Sliding Window Logic:
+
+\begin{itemize}
+\tightlist
+\item
+  For each position \texttt{i}, use 24 consecutive values as input:
+  \texttt{series{[}i:(i+23){]}}
+\item
+  Predict the next value: \texttt{series{[}i+24{]}}
+\item
+  Example:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    Sample 1: X = series{[}1:24{]}, y = series{[}25{]}
+  \item
+    Sample 2: X = series{[}2:25{]}, y = series{[}26{]}
+  \item
+    And so on\ldots{}
+  \end{itemize}
+\end{itemize}
+
+Result: 576 input-output pairs suitable for training RNNs.
+
+\subsection{3. Model Architecture 1: SimpleRNN (EMA-like
+Baseline)}\label{model-architecture-1-simplernn-ema-like-baseline}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{inputs }\OtherTok{\textless{}{-}} \FunctionTok{layer\_input}\NormalTok{(}\AttributeTok{shape =} \FunctionTok{c}\NormalTok{(Twin, }\DecValTok{1}\NormalTok{))}
+\NormalTok{rnn }\OtherTok{\textless{}{-}} \FunctionTok{layer\_simple\_rnn}\NormalTok{(inputs, }\AttributeTok{units =} \DecValTok{2}\NormalTok{, }\AttributeTok{activation =} \StringTok{"tanh"}\NormalTok{)}
+\NormalTok{outputs }\OtherTok{\textless{}{-}} \FunctionTok{layer\_dense}\NormalTok{(rnn, }\AttributeTok{units =} \DecValTok{1}\NormalTok{, }\AttributeTok{activation =} \StringTok{"linear"}\NormalTok{)}
+\NormalTok{model\_ema }\OtherTok{\textless{}{-}} \FunctionTok{keras\_model}\NormalTok{(inputs, outputs)}
+\end{Highlighting}
+\end{Shaded}
+
+Architecture:
+
+\begin{itemize}
+\tightlist
+\item
+  Input Layer: Accepts sequences of shape \texttt{(24,\ 1)}
+\item
+  SimpleRNN Layer:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \texttt{units\ =\ 2}: Only 2 hidden units (minimal capacity)
+  \item
+    \texttt{activation\ =\ "tanh"}: Standard RNN activation
+  \item
+    \texttt{return\_sequences\ =\ FALSE} (default): Returns only the
+    last hidden state
+  \end{itemize}
+\item
+  Dense Output Layer:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \texttt{units\ =\ 1}: Single output for next value prediction
+  \item
+    \texttt{activation\ =\ "linear"}: No activation for regression
+  \end{itemize}
+\end{itemize}
+
+Purpose: Serves as a baseline that mimics exponential moving average
+behavior due to limited capacity.
+
+\subsection{4. Model Architecture 2: LSTM
+Forecaster}\label{model-architecture-2-lstm-forecaster}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{inputs }\OtherTok{\textless{}{-}} \FunctionTok{layer\_input}\NormalTok{(}\AttributeTok{shape =} \FunctionTok{c}\NormalTok{(Twin, }\DecValTok{1}\NormalTok{))}
+\NormalTok{lstm }\OtherTok{\textless{}{-}} \FunctionTok{layer\_lstm}\NormalTok{(inputs, }\AttributeTok{units =} \DecValTok{16}\NormalTok{, }\AttributeTok{return\_sequences =} \ConstantTok{FALSE}\NormalTok{)}
+\NormalTok{outputs }\OtherTok{\textless{}{-}} \FunctionTok{layer\_dense}\NormalTok{(lstm, }\AttributeTok{units =} \DecValTok{1}\NormalTok{)}
+\NormalTok{model\_lstm }\OtherTok{\textless{}{-}} \FunctionTok{keras\_model}\NormalTok{(inputs, outputs)}
+\end{Highlighting}
+\end{Shaded}
+
+Architecture:
+
+\begin{itemize}
+\tightlist
+\item
+  Input Layer: Same shape \texttt{(24,\ 1)}
+\item
+  LSTM Layer:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \texttt{units\ =\ 16}: 16 LSTM cells (8x more capacity than
+    SimpleRNN)
+  \item
+    \texttt{return\_sequences\ =\ FALSE}: Return only final hidden state
+  \item
+    Includes forget, input, and output gates for better memory control
+  \end{itemize}
+\item
+  Dense Output Layer: Linear output for regression
+\end{itemize}
+
+Purpose: Leverage LSTM's gating mechanisms to capture long-term
+dependencies and periodic patterns.
+
+\subsection{5. Model Architecture 3: GRU
+Forecaster}\label{model-architecture-3-gru-forecaster}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{inputs }\OtherTok{\textless{}{-}} \FunctionTok{layer\_input}\NormalTok{(}\AttributeTok{shape =} \FunctionTok{c}\NormalTok{(Twin, }\DecValTok{1}\NormalTok{))}
+\NormalTok{gru }\OtherTok{\textless{}{-}} \FunctionTok{layer\_gru}\NormalTok{(inputs, }\AttributeTok{units =} \DecValTok{16}\NormalTok{, }\AttributeTok{return\_sequences =} \ConstantTok{FALSE}\NormalTok{)}
+\NormalTok{outputs }\OtherTok{\textless{}{-}} \FunctionTok{layer\_dense}\NormalTok{(gru, }\AttributeTok{units =} \DecValTok{1}\NormalTok{)}
+\NormalTok{model\_gru }\OtherTok{\textless{}{-}} \FunctionTok{keras\_model}\NormalTok{(inputs, outputs)}
+\end{Highlighting}
+\end{Shaded}
+
+Architecture:
+
+\begin{itemize}
+\tightlist
+\item
+  Input Layer: Same shape (24, 1)
+\item
+  GRU Layer:
+
+  \begin{itemize}
+  \tightlist
+  \item
+    \texttt{units\ =\ 16}: 16 GRU cells (same capacity as LSTM)
+  \item
+    \texttt{return\_sequences\ =\ FALSE}: Return only final hidden state
+  \item
+    Uses update and reset gates (simpler than LSTM)
+  \end{itemize}
+\item
+  Dense Output Layer: Linear output for regression
+\end{itemize}
+
+Purpose: Test whether GRU's simpler gating mechanism can match LSTM
+performance with fewer parameters.
+
+\subsection{6. Model Compilation}\label{model-compilation}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{model\_ema }\SpecialCharTok{\%\textgreater{}\%} \FunctionTok{compile}\NormalTok{(}
+  \AttributeTok{optimizer =} \FunctionTok{optimizer\_adam}\NormalTok{(}\AttributeTok{learning\_rate =} \FloatTok{1e{-}3}\NormalTok{, }\AttributeTok{clipnorm =} \FloatTok{1.0}\NormalTok{),}
+  \AttributeTok{loss =} \StringTok{"mse"}\NormalTok{, }\AttributeTok{metrics =} \StringTok{"mae"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+Training Configuration (same for all models):
+
+\begin{itemize}
+\tightlist
+\item
+  Optimizer: Adam with learning rate 0.001
+\item
+  Gradient Clipping: \texttt{clipnorm\ =\ 1.0} prevents exploding
+  gradients
+\item
+  Loss Function: Mean Squared Error (MSE) for regression
+\item
+  Metrics: Mean Absolute Error (MAE) for interpretable performance
+  tracking
+\end{itemize}
+
+Why Gradient Clipping? RNNs are prone to exploding gradients, especially
+during early training. Clipping ensures stable updates.
+
+\subsection{7. Model Evaluation and
+Visualization}\label{model-evaluation-and-visualization}
+
+\begin{Shaded}
+\begin{Highlighting}[]
+\NormalTok{pred\_ema }\OtherTok{\textless{}{-}}\NormalTok{ model\_ema  }\SpecialCharTok{\%\textgreater{}\%} \FunctionTok{predict}\NormalTok{(X)}
+\NormalTok{pred\_lstm }\OtherTok{\textless{}{-}}\NormalTok{ model\_lstm }\SpecialCharTok{\%\textgreater{}\%} \FunctionTok{predict}\NormalTok{(X)}
+\NormalTok{pred\_gru }\OtherTok{\textless{}{-}}\NormalTok{ model\_gru  }\SpecialCharTok{\%\textgreater{}\%} \FunctionTok{predict}\NormalTok{(X)}
+
+\NormalTok{plot\_idx }\OtherTok{\textless{}{-}} \DecValTok{1}\SpecialCharTok{:}\DecValTok{200}
+\FunctionTok{plot}\NormalTok{(y[plot\_idx,}\DecValTok{1}\NormalTok{], }\AttributeTok{type=}\StringTok{"l"}\NormalTok{, }\AttributeTok{col=}\StringTok{"black"}\NormalTok{, }\AttributeTok{lwd=}\DecValTok{2}\NormalTok{, }\AttributeTok{main=}\StringTok{"Validation forecasts"}\NormalTok{)}
+\FunctionTok{lines}\NormalTok{(pred\_ema[plot\_idx,}\DecValTok{1}\NormalTok{],  }\AttributeTok{col=}\StringTok{"steelblue"}\NormalTok{, }\AttributeTok{lwd=}\DecValTok{2}\NormalTok{)}
+\FunctionTok{lines}\NormalTok{(pred\_lstm[plot\_idx,}\DecValTok{1}\NormalTok{], }\AttributeTok{col=}\StringTok{"tomato"}\NormalTok{, }\AttributeTok{lwd=}\DecValTok{2}\NormalTok{)}
+\FunctionTok{lines}\NormalTok{(pred\_gru[plot\_idx,}\DecValTok{1}\NormalTok{],  }\AttributeTok{col=}\StringTok{"darkgreen"}\NormalTok{, }\AttributeTok{lwd=}\DecValTok{2}\NormalTok{)}
+\FunctionTok{legend}\NormalTok{(}\StringTok{"topleft"}\NormalTok{, }\AttributeTok{legend=}\FunctionTok{c}\NormalTok{(}\StringTok{"true"}\NormalTok{,}\StringTok{"EMA"}\NormalTok{,}\StringTok{"LSTM"}\NormalTok{,}\StringTok{"GRU"}\NormalTok{),}
+       \AttributeTok{col=}\FunctionTok{c}\NormalTok{(}\StringTok{"black"}\NormalTok{,}\StringTok{"steelblue"}\NormalTok{,}\StringTok{"tomato"}\NormalTok{,}\StringTok{"darkgreen"}\NormalTok{), }\AttributeTok{lwd=}\DecValTok{2}\NormalTok{, }\AttributeTok{bty=}\StringTok{"n"}\NormalTok{)}
+\end{Highlighting}
+\end{Shaded}
+
+Anticipated Performance:
+
+\begin{itemize}
+\tightlist
+\item
+  SimpleRNN (EMA): Likely to provide smoothed, reactive forecasts
+\item
+  LSTM: Should capture the 12-step periodicity and provide anticipatory
+  predictions
+\item
+  GRU: Expected to perform similarly to LSTM with potentially faster
+  training
+\end{itemize}
+
+Key Learning Points:
+
+\begin{enumerate}
+\def\labelenumi{\arabic{enumi}.}
+\tightlist
+\item
+  Capacity Matters: The 2-unit SimpleRNN has limited representational
+  power
+\item
+  Memory Mechanisms: LSTM/GRU gates help retain information about the
+  12-step cycle
+\item
+  Anticipatory vs.~Reactive: Advanced architectures can predict spikes
+  before they occur
+\item
+  Gradient Stability: Clipping ensures stable training across all
+  architectures
+\end{enumerate}
+
+\end{document}

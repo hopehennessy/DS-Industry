@@ -1,0 +1,964 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Collaborative filtering is another technique that can be used for recommendation.\n",
+    "\n",
+    "The underlying concept behind this technique is as follows:\n",
+    "* Assume Person A likes Oranges, and Person B likes Oranges.\n",
+    "* Assume Person A likes Apples.\n",
+    "* Person B is likely to have similar opinions on Apples as A than some other random person.\n",
+    "\n",
+    "The implications of collaborative filtering are obvious: you can predict and recommend items to users based on preference similarities. There are two types of collaborative filtering: user-based and item-based. \n",
+    "\n",
+    "Item Based Collaborative Filtering takes the similarities between items’ consumption history.\n",
+    "\n",
+    "User Based Collaborative Filtering considers similarities between user consumption history."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Case: Last.FM Music\n",
+    "\n",
+    "#### The data set contains information about users, their gender, their age, and which artists they have listened to on Last.FM. We will not use the entire dataset. For simplicity’s sake we only use songs in Germany and we will transform the data to a item frequency matrix. This means each row will represent a user, and each column represents and artist. For this we use R’s “reshape” package. This is largely administrative, so we will start with the transformed dataset.\n",
+    "\n",
+    "#### Download the [LastFM Germany frequency matrix](http://www.salemmarafi.com/wp-content/uploads/2014/04/lastfm-matrix-germany.csv) and put it in your working directory. Load up R and read the data file."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {
+    "_cell_guid": "79c7e3d0-c299-4dcb-8224-4455121ee9b0",
+    "_uuid": "d629ff2d2480ee46fbb7e2d37f6b5fab8052498a"
+   },
+   "outputs": [],
+   "source": [
+    "# Read data from Last.FM frequency matrix  \n",
+    "data.germany <- read.csv(file=\"../input/lastfm-matrix-germany.csv\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Lets look at a sample of our data. The output looks something like this:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<table>\n",
+       "<caption>A data.frame: 6 × 7</caption>\n",
+       "<thead>\n",
+       "\t<tr><th scope=col>user</th><th scope=col>abba</th><th scope=col>ac.dc</th><th scope=col>adam.green</th><th scope=col>aerosmith</th><th scope=col>afi</th><th scope=col>air</th></tr>\n",
+       "\t<tr><th scope=col>&lt;int&gt;</th><th scope=col>&lt;int&gt;</th><th scope=col>&lt;int&gt;</th><th scope=col>&lt;int&gt;</th><th scope=col>&lt;int&gt;</th><th scope=col>&lt;int&gt;</th><th scope=col>&lt;int&gt;</th></tr>\n",
+       "</thead>\n",
+       "<tbody>\n",
+       "\t<tr><td> 1</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>\n",
+       "\t<tr><td>33</td><td>0</td><td>0</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>\n",
+       "\t<tr><td>42</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>\n",
+       "\t<tr><td>51</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>\n",
+       "\t<tr><td>62</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>\n",
+       "\t<tr><td>75</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>\n",
+       "</tbody>\n",
+       "</table>\n"
+      ],
+      "text/latex": [
+       "A data.frame: 6 × 7\n",
+       "\\begin{tabular}{r|lllllll}\n",
+       " user & abba & ac.dc & adam.green & aerosmith & afi & air\\\\\n",
+       " <int> & <int> & <int> & <int> & <int> & <int> & <int>\\\\\n",
+       "\\hline\n",
+       "\t  1 & 0 & 0 & 0 & 0 & 0 & 0\\\\\n",
+       "\t 33 & 0 & 0 & 1 & 0 & 0 & 0\\\\\n",
+       "\t 42 & 0 & 0 & 0 & 0 & 0 & 0\\\\\n",
+       "\t 51 & 0 & 0 & 0 & 0 & 0 & 0\\\\\n",
+       "\t 62 & 0 & 0 & 0 & 0 & 0 & 0\\\\\n",
+       "\t 75 & 0 & 0 & 0 & 0 & 0 & 0\\\\\n",
+       "\\end{tabular}\n"
+      ],
+      "text/markdown": [
+       "\n",
+       "A data.frame: 6 × 7\n",
+       "\n",
+       "| user &lt;int&gt; | abba &lt;int&gt; | ac.dc &lt;int&gt; | adam.green &lt;int&gt; | aerosmith &lt;int&gt; | afi &lt;int&gt; | air &lt;int&gt; |\n",
+       "|---|---|---|---|---|---|---|\n",
+       "|  1 | 0 | 0 | 0 | 0 | 0 | 0 |\n",
+       "| 33 | 0 | 0 | 1 | 0 | 0 | 0 |\n",
+       "| 42 | 0 | 0 | 0 | 0 | 0 | 0 |\n",
+       "| 51 | 0 | 0 | 0 | 0 | 0 | 0 |\n",
+       "| 62 | 0 | 0 | 0 | 0 | 0 | 0 |\n",
+       "| 75 | 0 | 0 | 0 | 0 | 0 | 0 |\n",
+       "\n"
+      ],
+      "text/plain": [
+       "  user abba ac.dc adam.green aerosmith afi air\n",
+       "1  1   0    0     0          0         0   0  \n",
+       "2 33   0    0     1          0         0   0  \n",
+       "3 42   0    0     0          0         0   0  \n",
+       "4 51   0    0     0          0         0   0  \n",
+       "5 62   0    0     0          0         0   0  \n",
+       "6 75   0    0     0          0         0   0  "
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "head(data.germany[,c(1,3:8)])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "We’re good to go!\n",
+    "\n",
+    "# Item Based Collaborative Filtering\n",
+    "In item based collaborative filtering we do not really care about the users. So the first thing we should do is drop the user column from our data. This is really easy since it is the first column, but if it was not the first column we would still be able to drop it with the following code:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "  # Drop any column named \"user\"\n",
+    "  data.germany.ibs <- (data.germany[,!(names(data.germany) %in% c(\"user\"))])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "We then want to calculate the similarity of each song with the rest of the songs. This means that we want to compare each column in our “data.germany.ibs” data set with every other column in the data set. Specifically, we will be comparing what is known as the “[Cosine Similarity](http://en.wikipedia.org/wiki/Cosine_similarity)”.\n",
+    "\n",
+    "The cosine similarity, in essence takes the sum product of the first and second column, and divide that by the product of the square root of the sum of squares of each column. (that was a mouth-full!)\n",
+    "\n",
+    "The important thing to know is the resulting number represents how “similar” the first column is with the second column. We will use the following helper function to product the Cosine Similarity:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Create a helper function to calculate the cosine between two vectors\n",
+    "  getCosine <- function(x,y) \n",
+    "  {\n",
+    "    this.cosine <- sum(x*y) / (sqrt(sum(x*x)) * sqrt(sum(y*y)))\n",
+    "    return(this.cosine)\n",
+    "  }"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "We are now ready to start comparing each of our songs (items). We first need a placeholder to store the results of our cosine similarities. This placeholder will have the songs in both columns and rows:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Create a placeholder dataframe listing item vs. item\n",
+    "data.germany.ibs.similarity  <- matrix(NA, nrow=ncol(data.germany.ibs),ncol=ncol(data.germany.ibs),\n",
+    "                                       dimnames=list(colnames(data.germany.ibs),colnames(data.germany.ibs)))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The first 6 items of the empty placeholder will look like this:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<table>\n",
+       "<caption>A matrix: 6 × 285 of type lgl</caption>\n",
+       "<thead>\n",
+       "\t<tr><th></th><th scope=col>a.perfect.circle</th><th scope=col>abba</th><th scope=col>ac.dc</th><th scope=col>adam.green</th><th scope=col>aerosmith</th><th scope=col>afi</th><th scope=col>air</th><th scope=col>alanis.morissette</th><th scope=col>alexisonfire</th><th scope=col>alicia.keys</th><th scope=col>⋯</th><th scope=col>timbaland</th><th scope=col>tom.waits</th><th scope=col>tool</th><th scope=col>tori.amos</th><th scope=col>travis</th><th scope=col>trivium</th><th scope=col>u2</th><th scope=col>underoath</th><th scope=col>volbeat</th><th scope=col>yann.tiersen</th></tr>\n",
+       "</thead>\n",
+       "<tbody>\n",
+       "\t<tr><th scope=row>a.perfect.circle</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>⋯</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>abba</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>⋯</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>ac.dc</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>⋯</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>adam.green</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>⋯</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>aerosmith</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>⋯</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>afi</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>⋯</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "</tbody>\n",
+       "</table>\n"
+      ],
+      "text/latex": [
+       "A matrix: 6 × 285 of type lgl\n",
+       "\\begin{tabular}{r|lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll}\n",
+       "  & a.perfect.circle & abba & ac.dc & adam.green & aerosmith & afi & air & alanis.morissette & alexisonfire & alicia.keys & all.that.remains & amon.amarth & amy.macdonald & amy.winehouse & anti.flag & aphex.twin & apocalyptica & arcade.fire & arch.enemy & arctic.monkeys & as.i.lay.dying & atb & atreyu & audioslave & avril.lavigne & babyshambles & bad.religion & beastie.boys & beatsteaks & beck & beirut & belle.and.sebastian & beyonce & billy.talent & bjork & black.eyed.peas & black.sabbath & blind.guardian & blink.182 & bloc.party & bloodhound.gang & blur & boards.of.canada & bob.dylan & bob.marley & bob.marley...the.wailers & breaking.benjamin & bright.eyes & bring.me.the.horizon & britney.spears & bruce.springsteen & bullet.for.my.valentine & caliban & cascada & cat.power & children.of.bodom & chimaira & christina.aguilera & clueso & cocorosie & coldplay & crystal.castles & cypress.hill & daft.punk & damien.rice & dark.tranquillity & david.bowie & david.guetta & death.cab.for.cutie & deep.purple & deftones & deichkind & depeche.mode & dido & die.apokalyptischen.reiter & die.toten.hosen & digitalism & dimmu.borgir & dire.straits & disturbed & dream.theater & dredg & dropkick.murphys & duffy & editors & eels & elliott.smith & eluveitie & elvis.presley & eminem & ensiferum & enter.shikari & equilibrium & eric.clapton & evanescence & faithless & fall.out.boy & farin.urlaub & feist & finntroll & flogging.molly & flyleaf & foo.fighters & frank.sinatra & franz.ferdinand & funeral.for.a.friend & genesis & gentleman & godsmack & goldfrapp & good.charlotte & gorillaz & green.day & groove.coverage & guano.apes & guns.n.roses & hammerfall & hans.zimmer & hatebreed & heaven.shall.burn & him & hoobastank & hot.chip & howard.shore & in.extremo & in.flames & incubus & interpol & iron.maiden & jack.johnson & james.blunt & james.morrison & jamiroquai & jason.mraz & jay.z & jimi.hendrix & jimmy.eat.world & johnny.cash & jose.gonzalez & joy.division & judas.priest & justice & justin.timberlake & kaiser.chiefs & kanye.west & kate.nash & katie.melua & katy.perry & keane & kelly.clarkson & killswitch.engage & kings.of.convenience & kings.of.leon & korpiklaani & kreator & lacuna.coil & lady.gaga & led.zeppelin & lenny.kravitz & leona.lewis & lily.allen & limp.bizkit & linkin.park & lostprophets & machine.head & madonna & mando.diao & manowar & manu.chao & maria.mena & marilyn.manson & massive.attack & metallica & mgmt & michael.jackson & mika & millencolin & misfits & moby & modest.mouse & mogwai & morcheeba & motorhead & muse & my.chemical.romance & nada.surf & nelly.furtado & nickelback & nightwish & nine.inch.nails & nirvana & nofx & norah.jones & nouvelle.vague & oasis & oomph. & opeth & panic.at.the.disco & papa.roach & paramore & parkway.drive & pearl.jam & peter.fox & pink & pink.floyd & placebo & porcupine.tree & portishead & queen & queens.of.the.stone.age & r.e.m. & radiohead & rage.against.the.machine & rammstein & ramones & razorlight & red.hot.chili.peppers & regina.spektor & rihanna & rise.against & rob.zombie & robbie.williams & schandmaul & scooter & seeed & seether & serj.tankian & silverstein & simple.plan & slayer & slipknot & snow.patrol & soilwork & sonata.arctica & sonic.syndicate & staind & stars & stone.sour & subway.to.sally & sufjan.stevens & sum.41 & system.of.a.down & tegan.and.sara & tenacious.d & the.beatles & the.chemical.brothers & the.clash & the.cure & the.decemberists & the.doors & the.fratellis & the.fray & the.hives & the.killers & the.kooks & the.libertines & the.national & the.notwist & the.offspring & the.postal.service & the.prodigy & the.pussycat.dolls & the.rolling.stones & the.shins & the.smashing.pumpkins & the.smiths & the.streets & the.strokes & the.subways & the.ting.tings & the.used & the.white.stripes & the.wombats & thievery.corporation & three.days.grace & timbaland & tom.waits & tool & tori.amos & travis & trivium & u2 & underoath & volbeat & yann.tiersen\\\\\n",
+       "\\hline\n",
+       "\ta.perfect.circle & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tabba & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tac.dc & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tadam.green & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\taerosmith & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tafi & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\\end{tabular}\n"
+      ],
+      "text/markdown": [
+       "\n",
+       "A matrix: 6 × 285 of type lgl\n",
+       "\n",
+       "| <!--/--> | a.perfect.circle | abba | ac.dc | adam.green | aerosmith | afi | air | alanis.morissette | alexisonfire | alicia.keys | ⋯ | timbaland | tom.waits | tool | tori.amos | travis | trivium | u2 | underoath | volbeat | yann.tiersen |\n",
+       "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+       "| a.perfect.circle | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | ⋯ | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| abba | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | ⋯ | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| ac.dc | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | ⋯ | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| adam.green | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | ⋯ | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| aerosmith | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | ⋯ | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| afi | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | ⋯ | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "\n"
+      ],
+      "text/plain": [
+       "                 a.perfect.circle abba ac.dc adam.green aerosmith afi air\n",
+       "a.perfect.circle NA               NA   NA    NA         NA        NA  NA \n",
+       "abba             NA               NA   NA    NA         NA        NA  NA \n",
+       "ac.dc            NA               NA   NA    NA         NA        NA  NA \n",
+       "adam.green       NA               NA   NA    NA         NA        NA  NA \n",
+       "aerosmith        NA               NA   NA    NA         NA        NA  NA \n",
+       "afi              NA               NA   NA    NA         NA        NA  NA \n",
+       "                 alanis.morissette alexisonfire alicia.keys ⋯ timbaland\n",
+       "a.perfect.circle NA                NA           NA          ⋯ NA       \n",
+       "abba             NA                NA           NA          ⋯ NA       \n",
+       "ac.dc            NA                NA           NA          ⋯ NA       \n",
+       "adam.green       NA                NA           NA          ⋯ NA       \n",
+       "aerosmith        NA                NA           NA          ⋯ NA       \n",
+       "afi              NA                NA           NA          ⋯ NA       \n",
+       "                 tom.waits tool tori.amos travis trivium u2 underoath volbeat\n",
+       "a.perfect.circle NA        NA   NA        NA     NA      NA NA        NA     \n",
+       "abba             NA        NA   NA        NA     NA      NA NA        NA     \n",
+       "ac.dc            NA        NA   NA        NA     NA      NA NA        NA     \n",
+       "adam.green       NA        NA   NA        NA     NA      NA NA        NA     \n",
+       "aerosmith        NA        NA   NA        NA     NA      NA NA        NA     \n",
+       "afi              NA        NA   NA        NA     NA      NA NA        NA     \n",
+       "                 yann.tiersen\n",
+       "a.perfect.circle NA          \n",
+       "abba             NA          \n",
+       "ac.dc            NA          \n",
+       "adam.green       NA          \n",
+       "aerosmith        NA          \n",
+       "afi              NA          "
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "head(data.germany.ibs.similarity)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Perfect, all that’s left is to loop column by column and calculate the cosine similarities with our helper function, and then put the results into the placeholder data table. That sounds like a pretty straight-forward nested for-loop:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Lets fill in those empty spaces with cosine similarities\n",
+    "  # Loop through the columns\n",
+    "  for(i in 1:ncol(data.germany.ibs)) {\n",
+    "    # Loop through the columns for each column\n",
+    "    for(j in 1:ncol(data.germany.ibs)) {\n",
+    "      # Fill in placeholder with cosine similarities\n",
+    "      data.germany.ibs.similarity[i,j] <- getCosine(as.matrix(data.germany.ibs[i]),as.matrix(data.germany.ibs[j]))\n",
+    "    }\n",
+    "  }\n",
+    "\n",
+    "  # Back to dataframe\n",
+    "  data.germany.ibs.similarity <- as.data.frame(data.germany.ibs.similarity)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Note: For loops in R are infernally slow. We use as.matrix() to transform the columns into matrices since matrix operations run a lot faster. We transform the similarity matrix into a data.frame for later processes that we will use.\n",
+    "\n",
+    "We have our similarity matrix. Now the question is … so what?\n",
+    "\n",
+    "We are now in a position to make recommendations! We look at the top 10 neighbours of each song – those would be the recommendations we make to people listening to those songs.\n",
+    "\n",
+    "We start off by creating a placeholder:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Get the top 10 neighbours for each\n",
+    "  data.germany.neighbours <- matrix(NA, nrow=ncol(data.germany.ibs.similarity),ncol=11,\n",
+    "                                    dimnames=list(colnames(data.germany.ibs.similarity)))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Our empty placeholder should look like this:\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<table>\n",
+       "<caption>A matrix: 6 × 11 of type lgl</caption>\n",
+       "<tbody>\n",
+       "\t<tr><th scope=row>a.perfect.circle</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>abba</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>ac.dc</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>adam.green</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>aerosmith</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "\t<tr><th scope=row>afi</th><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td><td>NA</td></tr>\n",
+       "</tbody>\n",
+       "</table>\n"
+      ],
+      "text/latex": [
+       "A matrix: 6 × 11 of type lgl\n",
+       "\\begin{tabular}{r|lllllllllll}\n",
+       "\ta.perfect.circle & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tabba & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tac.dc & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tadam.green & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\taerosmith & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\tafi & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA & NA\\\\\n",
+       "\\end{tabular}\n"
+      ],
+      "text/markdown": [
+       "\n",
+       "A matrix: 6 × 11 of type lgl\n",
+       "\n",
+       "| a.perfect.circle | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| abba | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| ac.dc | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| adam.green | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| aerosmith | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "| afi | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA | NA |\n",
+       "\n"
+      ],
+      "text/plain": [
+       "                 [,1] [,2] [,3] [,4] [,5] [,6] [,7] [,8] [,9] [,10] [,11]\n",
+       "a.perfect.circle NA   NA   NA   NA   NA   NA   NA   NA   NA   NA    NA   \n",
+       "abba             NA   NA   NA   NA   NA   NA   NA   NA   NA   NA    NA   \n",
+       "ac.dc            NA   NA   NA   NA   NA   NA   NA   NA   NA   NA    NA   \n",
+       "adam.green       NA   NA   NA   NA   NA   NA   NA   NA   NA   NA    NA   \n",
+       "aerosmith        NA   NA   NA   NA   NA   NA   NA   NA   NA   NA    NA   \n",
+       "afi              NA   NA   NA   NA   NA   NA   NA   NA   NA   NA    NA   "
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "head(data.germany.neighbours)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Then we need to find the neighbours. This is another loop but runs much faster.\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "  for(i in 1:ncol(data.germany.ibs)) \n",
+    "  {\n",
+    "    data.germany.neighbours[i,] <- (t(head(n=11,rownames(data.germany.ibs.similarity[order(data.germany.ibs.similarity[,i],decreasing=TRUE),][i]))))\n",
+    "  }"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "It’s a little bit more complicated so lets break it down into steps:\n",
+    "\n",
+    "* We loop through all our artists\n",
+    "* We sort our similarity matrix for the artist so that we have the most similar first.\n",
+    "* We take the top 11 (first will always be the same artist) and put them into our placeholder\n",
+    "* Note we use t() to rotate the similarity matrix since the neighbour one is shaped differently\n",
+    "\n",
+    "The filled in placeholder should look like this:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<table>\n",
+       "<caption>A matrix: 6 × 11 of type chr</caption>\n",
+       "<tbody>\n",
+       "\t<tr><th scope=row>a.perfect.circle</th><td>a.perfect.circle</td><td>tool                 </td><td>dredg          </td><td>deftones     </td><td>porcupine.tree </td><td>nine.inch.nails</td><td>incubus           </td><td>system.of.a.down</td><td>opeth                </td><td>the.smashing.pumpkins</td><td>radiohead       </td></tr>\n",
+       "\t<tr><th scope=row>abba</th><td>abba            </td><td>madonna              </td><td>robbie.williams</td><td>elvis.presley</td><td>michael.jackson</td><td>queen          </td><td>the.beatles       </td><td>kelly.clarkson  </td><td>groove.coverage      </td><td>duffy                </td><td>mika            </td></tr>\n",
+       "\t<tr><th scope=row>ac.dc</th><td>ac.dc           </td><td>red.hot.chili.peppers</td><td>metallica      </td><td>iron.maiden  </td><td>the.offspring  </td><td>black.sabbath  </td><td>die.toten.hosen   </td><td>rammstein       </td><td>judas.priest         </td><td>the.beatles          </td><td>hammerfall      </td></tr>\n",
+       "\t<tr><th scope=row>adam.green</th><td>adam.green      </td><td>the.libertines       </td><td>the.strokes    </td><td>babyshambles </td><td>radiohead      </td><td>franz.ferdinand</td><td>the.kooks         </td><td>foo.fighters    </td><td>the.white.stripes    </td><td>the.beatles          </td><td>arctic.monkeys  </td></tr>\n",
+       "\t<tr><th scope=row>aerosmith</th><td>aerosmith       </td><td>u2                   </td><td>led.zeppelin   </td><td>metallica    </td><td>ac.dc          </td><td>lenny.kravitz  </td><td>the.rolling.stones</td><td>jack.johnson    </td><td>red.hot.chili.peppers</td><td>robbie.williams      </td><td>oasis           </td></tr>\n",
+       "\t<tr><th scope=row>afi</th><td>afi             </td><td>funeral.for.a.friend </td><td>rise.against   </td><td>fall.out.boy </td><td>anti.flag      </td><td>sum.41         </td><td>billy.talent      </td><td>lostprophets    </td><td>silverstein          </td><td>millencolin          </td><td>system.of.a.down</td></tr>\n",
+       "</tbody>\n",
+       "</table>\n"
+      ],
+      "text/latex": [
+       "A matrix: 6 × 11 of type chr\n",
+       "\\begin{tabular}{r|lllllllllll}\n",
+       "\ta.perfect.circle & a.perfect.circle & tool                  & dredg           & deftones      & porcupine.tree  & nine.inch.nails & incubus            & system.of.a.down & opeth                 & the.smashing.pumpkins & radiohead       \\\\\n",
+       "\tabba & abba             & madonna               & robbie.williams & elvis.presley & michael.jackson & queen           & the.beatles        & kelly.clarkson   & groove.coverage       & duffy                 & mika            \\\\\n",
+       "\tac.dc & ac.dc            & red.hot.chili.peppers & metallica       & iron.maiden   & the.offspring   & black.sabbath   & die.toten.hosen    & rammstein        & judas.priest          & the.beatles           & hammerfall      \\\\\n",
+       "\tadam.green & adam.green       & the.libertines        & the.strokes     & babyshambles  & radiohead       & franz.ferdinand & the.kooks          & foo.fighters     & the.white.stripes     & the.beatles           & arctic.monkeys  \\\\\n",
+       "\taerosmith & aerosmith        & u2                    & led.zeppelin    & metallica     & ac.dc           & lenny.kravitz   & the.rolling.stones & jack.johnson     & red.hot.chili.peppers & robbie.williams       & oasis           \\\\\n",
+       "\tafi & afi              & funeral.for.a.friend  & rise.against    & fall.out.boy  & anti.flag       & sum.41          & billy.talent       & lostprophets     & silverstein           & millencolin           & system.of.a.down\\\\\n",
+       "\\end{tabular}\n"
+      ],
+      "text/markdown": [
+       "\n",
+       "A matrix: 6 × 11 of type chr\n",
+       "\n",
+       "| a.perfect.circle | a.perfect.circle | tool                  | dredg           | deftones      | porcupine.tree  | nine.inch.nails | incubus            | system.of.a.down | opeth                 | the.smashing.pumpkins | radiohead        |\n",
+       "| abba | abba             | madonna               | robbie.williams | elvis.presley | michael.jackson | queen           | the.beatles        | kelly.clarkson   | groove.coverage       | duffy                 | mika             |\n",
+       "| ac.dc | ac.dc            | red.hot.chili.peppers | metallica       | iron.maiden   | the.offspring   | black.sabbath   | die.toten.hosen    | rammstein        | judas.priest          | the.beatles           | hammerfall       |\n",
+       "| adam.green | adam.green       | the.libertines        | the.strokes     | babyshambles  | radiohead       | franz.ferdinand | the.kooks          | foo.fighters     | the.white.stripes     | the.beatles           | arctic.monkeys   |\n",
+       "| aerosmith | aerosmith        | u2                    | led.zeppelin    | metallica     | ac.dc           | lenny.kravitz   | the.rolling.stones | jack.johnson     | red.hot.chili.peppers | robbie.williams       | oasis            |\n",
+       "| afi | afi              | funeral.for.a.friend  | rise.against    | fall.out.boy  | anti.flag       | sum.41          | billy.talent       | lostprophets     | silverstein           | millencolin           | system.of.a.down |\n",
+       "\n"
+      ],
+      "text/plain": [
+       "                 [,1]             [,2]                  [,3]           \n",
+       "a.perfect.circle a.perfect.circle tool                  dredg          \n",
+       "abba             abba             madonna               robbie.williams\n",
+       "ac.dc            ac.dc            red.hot.chili.peppers metallica      \n",
+       "adam.green       adam.green       the.libertines        the.strokes    \n",
+       "aerosmith        aerosmith        u2                    led.zeppelin   \n",
+       "afi              afi              funeral.for.a.friend  rise.against   \n",
+       "                 [,4]          [,5]            [,6]           \n",
+       "a.perfect.circle deftones      porcupine.tree  nine.inch.nails\n",
+       "abba             elvis.presley michael.jackson queen          \n",
+       "ac.dc            iron.maiden   the.offspring   black.sabbath  \n",
+       "adam.green       babyshambles  radiohead       franz.ferdinand\n",
+       "aerosmith        metallica     ac.dc           lenny.kravitz  \n",
+       "afi              fall.out.boy  anti.flag       sum.41         \n",
+       "                 [,7]               [,8]             [,9]                 \n",
+       "a.perfect.circle incubus            system.of.a.down opeth                \n",
+       "abba             the.beatles        kelly.clarkson   groove.coverage      \n",
+       "ac.dc            die.toten.hosen    rammstein        judas.priest         \n",
+       "adam.green       the.kooks          foo.fighters     the.white.stripes    \n",
+       "aerosmith        the.rolling.stones jack.johnson     red.hot.chili.peppers\n",
+       "afi              billy.talent       lostprophets     silverstein          \n",
+       "                 [,10]                 [,11]           \n",
+       "a.perfect.circle the.smashing.pumpkins radiohead       \n",
+       "abba             duffy                 mika            \n",
+       "ac.dc            the.beatles           hammerfall      \n",
+       "adam.green       the.beatles           arctic.monkeys  \n",
+       "aerosmith        robbie.williams       oasis           \n",
+       "afi              millencolin           system.of.a.down"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "head(data.germany.neighbours)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "This means for those listening to Abba we would recommend Madonna and Robbie Williams.\n",
+    "Likewise for people listening to ACDC we would recommend the Red Hot Chilli Peppers and Metallica.1"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# User Based Recommendations\n",
+    "We will need our similarity matrix for User Based recommendations.\n",
+    "\n",
+    "The process behind creating a score matrix for the User Based recommendations is pretty straight forward:\n",
+    "\n",
+    "* Choose an item and check if a user consumed that item\n",
+    "* Get the similarities of that item’s top X neighbours\n",
+    "* Get the consumption record of the user of the top X neighbours\n",
+    "* Calculate the score with a formula: sumproduct(purchaseHistory, similarities)/sum(similarities)\n",
+    "\n",
+    "We can start by creating a helper function to calculate the score mentioned in the last step."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Lets make a helper function to calculate the scores\n",
+    "  getScore <- function(history, similarities)\n",
+    "  {\n",
+    "    x <- sum(history*similarities)/sum(similarities)\n",
+    "    x\n",
+    "  }"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "We will also need a holder matrix. We will use the original data set now (data.germany):\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# A placeholder matrix\n",
+    " holder <- matrix(NA, nrow=nrow(data.germany),ncol=ncol(data.germany)-1,dimnames=list((data.germany$user),colnames(data.germany[-1])))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The rest is one big ugly nested loop. First the loop, then we will break it down step by step:\n",
+    "\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Loop through the users (rows)\n",
+    "   for(i in 1:nrow(holder)) \n",
+    "   {\n",
+    "       # Loops through the products (columns)\n",
+    "       for(j in 1:ncol(holder)) \n",
+    "       {\n",
+    "           # Get the user's name and th product's name\n",
+    "           # We do this not to conform with vectors sorted differently \n",
+    "             user <- rownames(holder)[i]\n",
+    "             product <- colnames(holder)[j]\n",
+    "           \n",
+    "           # We do not want to recommend products you have already consumed\n",
+    "           # If you have already consumed it, we store an empty string\n",
+    "             if(as.integer(data.germany[data.germany$user==user,product]) == 1)\n",
+    "             { \n",
+    "                 holder[i,j]<-\"\"\n",
+    "              } else {\n",
+    "        \n",
+    "           # We first have to get a product's top 10 neighbours sorted by similarity\n",
+    "             topN<-((head(n=11,(data.germany.ibs.similarity[order(data.germany.ibs.similarity[,product],decreasing=TRUE),][product]))))\n",
+    "             topN.names <- as.character(rownames(topN))\n",
+    "             topN.similarities <- as.numeric(topN[,1])\n",
+    "              \n",
+    "           # Drop the first one because it will always be the same song\n",
+    "             topN.similarities<-topN.similarities[-1]\n",
+    "             topN.names<-topN.names[-1]\n",
+    "                           \n",
+    "           # We then get the user's purchase history for those 10 items\n",
+    "             topN.purchases<- data.germany[,c(\"user\",topN.names)]\n",
+    "             topN.userPurchases<-topN.purchases[topN.purchases$user==user,]\n",
+    "             topN.userPurchases <- as.numeric(topN.userPurchases[!(names(topN.userPurchases) %in% c(\"user\"))])\n",
+    "\n",
+    "            # We then calculate the score for that product and that user\n",
+    "             holder[i,j]<-getScore(similarities=topN.similarities,history=topN.userPurchases)\n",
+    "           \n",
+    "         } # close else statement\n",
+    "       } # end product for loop   \n",
+    "   } # end user for loop\n",
+    "\n",
+    "data.germany.user.scores <- holder"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "The loop starts by taking each user (row) and then jumps into another loop that takes each column (artists).\n",
+    "We then store the user’s name and artist name in variables to use them easily later.\n",
+    "We then use an if statement to filter out artists that a user has already listened to – this is a business case decision.\n",
+    "\n",
+    "The next bit gets the item based similarity scores for the artist under consideration."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# We first have to get a product's top 10 neighbours sorted by similarity\n",
+    " topN<-((head(n=11,(data.germany.ibs.similarity[order(data.germany.ibs.similarity[,product],decreasing=TRUE),][product]))))\n",
+    " topN.names <- as.character(rownames(topN))\n",
+    " topN.similarities <- as.numeric(topN[,1])\n",
+    "              \n",
+    "# Drop the first one because it will always be the same song\n",
+    " topN.similarities<-topN.similarities[-1]\n",
+    " topN.names<-topN.names[-1]"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "It is important to note the number of artists you pick matters. We pick the top 10.\n",
+    "We store the similarities score and song names.\n",
+    "We also drop the first column because, as we saw, it always represents the same song.\n",
+    "\n",
+    "We’re almost there. We just need the user’s purchase history for the top 10 songs."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# We then get the user's purchase history for those 10 items\n",
+    " topN.purchases<- data.germany[,c(\"user\",topN.names)]\n",
+    " topN.userPurchases<-topN.purchases[topN.purchases$user==user,]\n",
+    " topN.userPurchases <- as.numeric(topN.userPurchases[!(names(topN.userPurchases) %in% c(\"user\"))])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "We use the original data set to get the purchases of our users’ top 10 purchases.\n",
+    "We filter out our current user in the loop and then filter out purchases that match the user.\n",
+    "\n",
+    "We are now ready to calculate the score and store it in our holder matrix:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# We then calculate the score for that product and that user\n",
+    "  holder[i,j]<-getScore(similarities=topN.similarities,history=topN.userPurchases)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "Once we are done we can store the results in a data frame.\n",
+    "\n",
+    "The results should look something like this:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<table>\n",
+       "<caption>A matrix: 6 × 285 of type chr</caption>\n",
+       "<thead>\n",
+       "\t<tr><th></th><th scope=col>a.perfect.circle</th><th scope=col>abba</th><th scope=col>ac.dc</th><th scope=col>adam.green</th><th scope=col>aerosmith</th><th scope=col>afi</th><th scope=col>air</th><th scope=col>alanis.morissette</th><th scope=col>alexisonfire</th><th scope=col>alicia.keys</th><th scope=col>⋯</th><th scope=col>timbaland</th><th scope=col>tom.waits</th><th scope=col>tool</th><th scope=col>tori.amos</th><th scope=col>travis</th><th scope=col>trivium</th><th scope=col>u2</th><th scope=col>underoath</th><th scope=col>volbeat</th><th scope=col>yann.tiersen</th></tr>\n",
+       "</thead>\n",
+       "<tbody>\n",
+       "\t<tr><th scope=row>1</th><td>0                 </td><td>0                 </td><td>0.204405399744717 </td><td>0                 </td><td>0.266174512273766 </td><td>0                 </td><td>0.118139774940785 </td><td>0.186878798622001</td><td>0                 </td><td>0                </td><td>⋯</td><td>0                 </td><td>0                 </td><td>0</td><td>0                </td><td>0.0954959224350293</td><td>0                </td><td>0                 </td><td>0                </td><td>0                 </td><td>0                 </td></tr>\n",
+       "\t<tr><th scope=row>33</th><td>0.0823426024461794</td><td>0                 </td><td>0.0959115320210641</td><td>                  </td><td>0.0888852208491466</td><td>0                 </td><td>0.190638390075421 </td><td>0.175416279232336</td><td>0.069720392848255 </td><td>0                </td><td>⋯</td><td>0.0821721486819862</td><td>0.0865244527726245</td><td>0</td><td>0.086036189972276</td><td>0.349529941129281 </td><td>0                </td><td>0.0945433380923042</td><td>0                </td><td>0.0855854486135743</td><td>0.0900749561470353</td></tr>\n",
+       "\t<tr><th scope=row>42</th><td>0                 </td><td>0.0897665536183953</td><td>0                 </td><td>0                 </td><td>0                 </td><td>0                 </td><td>0                 </td><td>0                </td><td>0                 </td><td>0                </td><td>⋯</td><td>0                 </td><td>0                 </td><td>0</td><td>0.167548675471972</td><td>0                 </td><td>0.10722231393357 </td><td>0                 </td><td>0                </td><td>0                 </td><td>0                 </td></tr>\n",
+       "\t<tr><th scope=row>51</th><td>0.0823426024461794</td><td>0.0835681135086085</td><td>0                 </td><td>0.0835017734266233</td><td>0                 </td><td>0.0929543917995141</td><td>0                 </td><td>0                </td><td>0.0670884792982441</td><td>0.081037422331836</td><td>⋯</td><td>0                 </td><td>0                 </td><td>0</td><td>0                </td><td>0                 </td><td>0                </td><td>0                 </td><td>0                </td><td>0                 </td><td>0                 </td></tr>\n",
+       "\t<tr><th scope=row>62</th><td>0                 </td><td>0                 </td><td>0.11430458769156  </td><td>0.0931968819518542</td><td>0.0882213669482593</td><td>0.0929543917995141</td><td>0                 </td><td>0.102627304422923</td><td>0.0670884792982441</td><td>0                </td><td>⋯</td><td>0.296038907177408 </td><td>0                 </td><td>0</td><td>0                </td><td>0.0771395687672651</td><td>0                </td><td>0                 </td><td>0                </td><td>0.0918341476272802</td><td>0                 </td></tr>\n",
+       "\t<tr><th scope=row>75</th><td>0                 </td><td>0                 </td><td>0                 </td><td>0                 </td><td>0                 </td><td>0.220023979487093 </td><td>0.0851088107225124</td><td>0                </td><td>                  </td><td>0                </td><td>⋯</td><td>0                 </td><td>0                 </td><td>0</td><td>0                </td><td>0                 </td><td>0.106024261650271</td><td>0                 </td><td>0.117373736699035</td><td>0                 </td><td>0                 </td></tr>\n",
+       "</tbody>\n",
+       "</table>\n"
+      ],
+      "text/latex": [
+       "A matrix: 6 × 285 of type chr\n",
+       "\\begin{tabular}{r|lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll}\n",
+       "  & a.perfect.circle & abba & ac.dc & adam.green & aerosmith & afi & air & alanis.morissette & alexisonfire & alicia.keys & all.that.remains & amon.amarth & amy.macdonald & amy.winehouse & anti.flag & aphex.twin & apocalyptica & arcade.fire & arch.enemy & arctic.monkeys & as.i.lay.dying & atb & atreyu & audioslave & avril.lavigne & babyshambles & bad.religion & beastie.boys & beatsteaks & beck & beirut & belle.and.sebastian & beyonce & billy.talent & bjork & black.eyed.peas & black.sabbath & blind.guardian & blink.182 & bloc.party & bloodhound.gang & blur & boards.of.canada & bob.dylan & bob.marley & bob.marley...the.wailers & breaking.benjamin & bright.eyes & bring.me.the.horizon & britney.spears & bruce.springsteen & bullet.for.my.valentine & caliban & cascada & cat.power & children.of.bodom & chimaira & christina.aguilera & clueso & cocorosie & coldplay & crystal.castles & cypress.hill & daft.punk & damien.rice & dark.tranquillity & david.bowie & david.guetta & death.cab.for.cutie & deep.purple & deftones & deichkind & depeche.mode & dido & die.apokalyptischen.reiter & die.toten.hosen & digitalism & dimmu.borgir & dire.straits & disturbed & dream.theater & dredg & dropkick.murphys & duffy & editors & eels & elliott.smith & eluveitie & elvis.presley & eminem & ensiferum & enter.shikari & equilibrium & eric.clapton & evanescence & faithless & fall.out.boy & farin.urlaub & feist & finntroll & flogging.molly & flyleaf & foo.fighters & frank.sinatra & franz.ferdinand & funeral.for.a.friend & genesis & gentleman & godsmack & goldfrapp & good.charlotte & gorillaz & green.day & groove.coverage & guano.apes & guns.n.roses & hammerfall & hans.zimmer & hatebreed & heaven.shall.burn & him & hoobastank & hot.chip & howard.shore & in.extremo & in.flames & incubus & interpol & iron.maiden & jack.johnson & james.blunt & james.morrison & jamiroquai & jason.mraz & jay.z & jimi.hendrix & jimmy.eat.world & johnny.cash & jose.gonzalez & joy.division & judas.priest & justice & justin.timberlake & kaiser.chiefs & kanye.west & kate.nash & katie.melua & katy.perry & keane & kelly.clarkson & killswitch.engage & kings.of.convenience & kings.of.leon & korpiklaani & kreator & lacuna.coil & lady.gaga & led.zeppelin & lenny.kravitz & leona.lewis & lily.allen & limp.bizkit & linkin.park & lostprophets & machine.head & madonna & mando.diao & manowar & manu.chao & maria.mena & marilyn.manson & massive.attack & metallica & mgmt & michael.jackson & mika & millencolin & misfits & moby & modest.mouse & mogwai & morcheeba & motorhead & muse & my.chemical.romance & nada.surf & nelly.furtado & nickelback & nightwish & nine.inch.nails & nirvana & nofx & norah.jones & nouvelle.vague & oasis & oomph. & opeth & panic.at.the.disco & papa.roach & paramore & parkway.drive & pearl.jam & peter.fox & pink & pink.floyd & placebo & porcupine.tree & portishead & queen & queens.of.the.stone.age & r.e.m. & radiohead & rage.against.the.machine & rammstein & ramones & razorlight & red.hot.chili.peppers & regina.spektor & rihanna & rise.against & rob.zombie & robbie.williams & schandmaul & scooter & seeed & seether & serj.tankian & silverstein & simple.plan & slayer & slipknot & snow.patrol & soilwork & sonata.arctica & sonic.syndicate & staind & stars & stone.sour & subway.to.sally & sufjan.stevens & sum.41 & system.of.a.down & tegan.and.sara & tenacious.d & the.beatles & the.chemical.brothers & the.clash & the.cure & the.decemberists & the.doors & the.fratellis & the.fray & the.hives & the.killers & the.kooks & the.libertines & the.national & the.notwist & the.offspring & the.postal.service & the.prodigy & the.pussycat.dolls & the.rolling.stones & the.shins & the.smashing.pumpkins & the.smiths & the.streets & the.strokes & the.subways & the.ting.tings & the.used & the.white.stripes & the.wombats & thievery.corporation & three.days.grace & timbaland & tom.waits & tool & tori.amos & travis & trivium & u2 & underoath & volbeat & yann.tiersen\\\\\n",
+       "\\hline\n",
+       "\t1 & 0                  & 0                  & 0.204405399744717  & 0                  & 0.266174512273766  & 0                  & 0.118139774940785  & 0.186878798622001 & 0                  & 0                 & 0                 & 0.106600373272566 & 0                  & 0.192921812682251  & 0.0930059283895377 & 0 & 0                 & 0                  & 0 & 0.108813456618037 & 0                 & 0                 & 0                 & 0.0883179717802155 & 0                 & 0                 & 0.171930795254959  & 0                 & 0.0939939131890863 & 0                  & 0                  & 0                  & 0                  & 0                 & 0.0848734651978203 & 0                  & 0.103620660932099 & 0.175755965555654  & 0                 & 0.123876834163072 & 0.102303748137054  & 0.182996391435444 & 0 & 0.13231175052126 & 0.124469843860107 & 0.203667211907778  & 0                  & 0                 & 0                  & 0                  & 0 & 0                  & 0                 & 0                 & 0                & 0                  & 0                  & 0 & 0.113008847392209 & 0                  & 0.311745938455157 & 0.161053336750069  & 0                  & 0                 & 0.079683797576884 & 0.112135025183084 & 0.112723637881416  & 0                  & 0.0987097012961358 & 0.105590745879518 & 0                  & 0                 & 0 & 0                  & 0                  & 0.113412413274553  & 0.104582323114005  & 0 & 0.189896118382161  & 0                  & 0                  & 0 &                    & 0 & 0.0934980739706579 & 0 & 0                  &                    & 0.0765122237798216 & 0                  & 0.102527766158671  & 0                  & 0.125452909570962 & 0.151450372574733 & 0                 & 0                 & 0                 & 0.0927560401788584 & 0                & 0.127557983985195  & 0.332939263163716  & 0                  & 0.0988959681372661 & 0.0881766967624552 & 0.0968703986550934 & 0                & 0                 & 0.153919020961654  & 0                 &                   & 0                 & 0.187912840910922  & 0.0968435367780697 & 0                  &                   & 0.0919705138204908 & 0.10029169392816 & 0                  & 0                  & 0                 & 0.0827917814390893 & 0                  & 0                 & 0.0873286725899049 & 0.13164535080242 & 0 & 0.191362062462937  & 0                 & 0.121560505210692 &                    & 0                 & 0.0909115116437433 & 0.0915907128664826 & 0.117391219244581  & 0.0717367267231874 & 0.11206369769095 & 0.0846562808364777 & 0.200216870229441  & 0 & 0                  &   & 0                 & 0 & 0.132673176876777  & 0                  & 0.161112375396911 & 0                  & 0 & 0.108537283760064 & 0                 & 0                 & 0                  & 0.0966431343887313 & 0.203078742183769  & 0.129244647970108 & 0.097172750144802 & 0                  & 0.0763622350728278 & 0.0784825383215335 & 0                  & 0                 & 0.0879110876145978 & 0.0938531899955737 & 0                  & 0                 & 0                  & 0.207098091261135 & 0                  & 0.0997020045436525 & 0                 & 0                 & 0.0916800949550748 & 0 & 0.08971923522183   & 0 & 0                  & 0.0818913675245877 & 0.182568915580213 & 0.217263318971723  & 0                 & 0                  & 0.131147365424323 & 0.116721932785807 & 0.197767262922254  & 0                 & 0                  & 0                 & 0.0992405834202417 & 0.0984312975282476 & 0                 & 0.117541406180524  & 0.114225572873128  & 0.190499967610784  & 0.139580501003899 & 0.201136937122528 & 0                 & 0.0851270364486193 & 0                 & 0                 & 0                 & 0                 & 0.107593284757171 & 0.0927011322851982 & 0                 & 0.088746556954213 & 0.107089385910307  & 0                  & 0.127090198345665 & 0                 & 0                 & 0                 & 0                 & 0.0897681031074493 & 0                 & 0.177357377027292  & 0.104020534863862 &                    & 0                  & 0                 & 0                  &                    & 0.0821973261345767 &                   & 0                & 0.0935773243026788 & 0                  & 0                  & 0                  & 0                  & 0 & 0                  & 0.101088677572452 & 0                  & 0                  & 0                  & 0                 & 0                  & 0 & 0.139121320869566 & 0                 & 0                  & 0                  & 0 & 0.0934736283760859 & 0.218716257601922 & 0.102332780186492  & 0.195476743583214 & 0 & 0                 & 0.179858745405796 & 0.0877744526888059 & 0                  & 0.0965068301230504 &                   & 0.104507365638316 & 0                  & 0                 & 0                  & 0.105132312539557  & 0.105730768591199 & 0.100634114052989 & 0 &   & 0                  & 0                  & 0                 & 0.0808703032787739 & 0                 & 0                  & 0                  & 0                  & 0.0949279637159786 & 0.0924068849256148 & 0.113371682324188  & 0                  & 0                  & 0                  & 0 & 0                 & 0.0954959224350293 & 0                 & 0                  & 0                 & 0                  & 0                 \\\\\n",
+       "\t33 & 0.0823426024461794 & 0                  & 0.0959115320210641 &                    & 0.0888852208491466 & 0                  & 0.190638390075421  & 0.175416279232336 & 0.069720392848255  & 0                 & 0                 & 0                 & 0.173997345693115  & 0.194199741444128  & 0.0772217705345593 & 0 & 0                 & 0.114297136177524  & 0 & 0.219705800310423 & 0                 & 0                 & 0                 & 0.200688484043178  & 0.226586124529514 & 0.365852514218861 & 0.089117845472025  & 0.105510869703337 & 0.406169505843191  & 0.0892677847548821 & 0.0955546438746051 &                    & 0                  & 0.105254474661324 & 0.108118208083871  & 0                  & 0                 & 0                  & 0.170656901162651 & 0.302052734343141 & 0                  & 0.106369257891579 & 0 & 0                & 0.174387384975105 & 0.175449321996573  & 0.231382749877015  & 0.189740428539353 & 0                  & 0                  & 0 & 0.199684471908929  & 0                 & 0.069359835775976 & 0.16494158909527 & 0                  & 0                  & 0 &                   & 0                  &                   & 0.0887925132445269 & 0.0930619159177158 & 0.101089713296182 & 0.259315149470354 & 0                 & 0.0801092011550941 & 0.0925250640348436 &                    & 0                 & 0.0979299280575153 &                   & 0 & 0.0797807670782403 & 0                  &                    & 0.0928278224363832 & 0 & 0.0880148293304646 & 0                  & 0                  & 0 & 0.0823068985474326 & 0 & 0.105087894258404  & 0 & 0.195158447793881  & 0                  & 0                  & 0.18080260162453   & 0                  & 0                  & 0                 & 0                 &                   & 0                 & 0                 &                    & 0.08669856035845 & 0                  & 0                  & 0.425962999682728  &                    & 0.185057721129913  & 0.214638617494909  & 0                & 0.170506814181293 & 0.518466516992004  & 0                 & 0.103267585665618 & 0.104960500505797 & 0.220383107314437  & 0.302870261093584  & 0.0656054687830218 & 0.187366420677357 & 0.0923417186776023 & 0                & 0.181122277942179  & 0                  & 0                 & 0.239895940580208  & 0.324157322207886  & 0.102417395178702 & 0                  & 0                & 0 &                    & 0.185725375937842 & 0                 &                    & 0.114861063313145 & 0.288469066278088  & 0                  & 0.377213980894931  & 0.0717367267231874 & 0                & 0.165539172208806  & 0                  & 0 & 0.0850601413621366 & 0 & 0.181537721762148 & 0 & 0.280017277938317  & 0.229678971900134  & 0.304457597805392 & 0                  & 0 &                   & 0                 & 0                 & 0.206256338168551  & 0.504974848925837  & 0                  & 0                 & 0.113368208502269 & 0                  & 0                  & 0.0784825383215335 & 0                  & 0.356918902121846 & 0.236174200339764  &                    & 0.189648031127283  & 0                 & 0                  &                   & 0                  & 0.121263623708615  & 0.188712929041794 & 0                 & 0                  & 0 & 0.0891612113355887 & 0 & 0                  & 0                  & 0                 & 0.0971157192749556 & 0.195769924313942 & 0.190745266970237  & 0.137906847221416 & 0                 & 0.282714242192082  & 0.184371186545578 & 0.119475553970168  & 0                 & 0.323455733781057  & 0.0962914867124161 & 0.107476365792929 & 0.183879420842685  & 0.0625320009069809 & 0.197591983906224  &                   & 0.408601402808595 & 0.11559624235581  & 0                  & 0.264651662716811 & 0.220053440561235 &                   & 0                 & 0                 & 0.530456026023029  & 0.10182597978502  & 0                 & 0.182750394760922  & 0                  & 0                 & 0.088027726543434 & 0.30968236139814  & 0.202839400743662 & 0.102109369056764 & 0                  & 0.263877964655913 & 0.0852684537171371 &                   & 0.505186244424417  & 0.0836623663237958 & 0                 & 0.0943570850066262 & 0                  & 0.166785580302375  & 0                 & 0.1552721488364  &                    & 0.0810726242313718 & 0.0971344690199674 & 0                  & 0.0948804020943212 & 0 & 0                  & 0.253417520189593 & 0                  & 0.0846749097490059 & 0                  & 0                 & 0.0842754975351821 & 0 & 0                 & 0.203806722900414 & 0.0967003793439282 & 0.193789433201281  &   & 0                  & 0                 & 0.0865058250009998 & 0                 & 0 & 0.120273324782377 & 0                 & 0.296380049275844  &                    & 0.220313918173141  & 0.39539877979814  &                   & 0.287877692426574  & 0.196744050505647 & 0.0968572906580701 & 0.210282690850532  & 0.341348024507959 & 0.118300071902105 & 0 & 0 & 0.189725069065786  & 0.0846796419811934 & 0.117761549095409 & 0.17536887199082   &                   & 0.310383052121803  & 0.0746321205255211 & 0.180850982344745  & 0.199862804213709  & 0.126321140289068  & 0                  &                    & 0.0821721486819862 & 0.0865244527726245 & 0 & 0.086036189972276 & 0.349529941129281  & 0                 & 0.0945433380923042 & 0                 & 0.0855854486135743 & 0.0900749561470353\\\\\n",
+       "\t42 & 0                  & 0.0897665536183953 & 0                  & 0                  & 0                  & 0                  & 0                  & 0                 & 0                  & 0                 & 0.128404955587082 & 0                 & 0.0869945086817529 & 0                  & 0                  & 0 & 0.220941918953959 & 0                  & 0 & 0                 &                   & 0.120358699447718 & 0.111165584234956 & 0                  &                   & 0                 & 0                  & 0                 & 0                  & 0                  & 0                  & 0                  & 0                  & 0                 & 0                  & 0                  & 0                 & 0.0997782597838624 & 0                 & 0                 & 0                  & 0                 & 0 & 0                & 0                 & 0                  & 0                  & 0                 & 0.125567503264668  & 0.0724996244972366 & 0 & 0.0954034729864704 & 0.122351606459131 & 0.178644954127837 & 0                & 0.0839661858933543 & 0.11067304824838   & 0 & 0                 & 0                  & 0                 & 0                  & 0                  & 0                 & 0                 & 0                 & 0                  & 0                  & 0                  & 0                 & 0.0812540937770388 & 0                 & 0 & 0.0808375120234508 & 0.0863635921370486 & 0                  & 0                  & 0 & 0                  & 0                  & 0.0862013383921443 & 0 & 0                  & 0 & 0                  & 0 & 0                  & 0.0658081172447122 & 0                  & 0                  & 0.0812279789106821 & 0                  & 0                 & 0                 &                   & 0                 & 0                 & 0                  & 0                & 0.0906717129650555 & 0.101550542772829  & 0.104805891148896  & 0                  & 0                  & 0                  & 0                & 0                 & 0                  & 0                 & 0                 & 0                 & 0                  & 0                  &                    & 0                 & 0                  & 0                & 0.0817200101630878 & 0.117270773621016  & 0.13390999655744  &                    & 0.0942454005418077 & 0                 & 0.0891488018611377 &                  & 0 & 0                  & 0                 & 0                 & 0                  & 0                 & 0                  & 0                  & 0                  & 0                  & 0                & 0                  & 0                  & 0 & 0                  & 0 & 0                 & 0 & 0                  & 0                  & 0                 & 0                  & 0 & 0                 & 0.100360945069159 & 0.128303516587425 & 0                  & 0                  & 0.0833280887046941 & 0                 & 0.352065716416113 & 0.0756817451153477 & 0                  & 0                  & 0.0823826259226358 & 0                 & 0                  & 0.191999107489399  & 0                  & 0.109359933160005 & 0                  & 0                 & 0.0953533263442683 & 0                  & 0                 & 0.205303239676682 & 0                  & 0 & 0                  & 0 & 0                  & 0                  & 0                 & 0                  & 0                 & 0                  & 0                 & 0                 & 0                  & 0.101505112277947 & 0                  & 0                 & 0                  &                    & 0                 & 0                  & 0                  & 0                  & 0                 & 0                 & 0.426284443495852 & 0                  & 0                 & 0                 & 0                 & 0.132690557869558 & 0                 & 0                  & 0.193045955439346 & 0                 & 0.0840199663018207 & 0.0675284879796199 & 0                 & 0                 & 0                 & 0                 & 0                 & 0                  & 0.296665463159542 & 0                  & 0                 & 0                  & 0                  & 0                 & 0                  & 0.0957031262581704 & 0                  & 0.243381996619038 & 0.13507732025201 & 0                  & 0                  & 0                  & 0                  & 0.107039529580992  & 0 & 0                  & 0                 & 0.0986135634148773 & 0.229893653684547  & 0.0998546680973948 & 0                 & 0                  & 0 & 0.2238273872465   & 0                 & 0                  & 0                  & 0 & 0                  & 0                 & 0                  & 0                 & 0 & 0                 & 0                 & 0                  & 0                  & 0                  & 0                 & 0                 & 0                  & 0                 & 0                  & 0                  & 0                 & 0                 & 0 & 0 & 0                  & 0                  & 0                 & 0                  & 0                 & 0                  & 0                  & 0                  & 0                  & 0                  & 0                  & 0.0955610033145058 & 0                  & 0                  & 0 & 0.167548675471972 & 0                  & 0.10722231393357  & 0                  & 0                 & 0                  & 0                 \\\\\n",
+       "\t51 & 0.0823426024461794 & 0.0835681135086085 & 0                  & 0.0835017734266233 & 0                  & 0.0929543917995141 & 0                  & 0                 & 0.0670884792982441 & 0.081037422331836 & 0                 & 0                 & 0.128222167924313  & 0.310488264356169  & 0                  & 0 & 0                 & 0.0818615412957414 & 0 &                   & 0                 & 0                 & 0                 & 0                  & 0                 & 0.194113264171367 & 0                  & 0                 &                    & 0.0884480242282175 & 0                  & 0.0809978236981692 & 0                  &                   & 0.0865003916054315 & 0                  & 0                 & 0                  & 0.116207029082089 & 0.367840346435183 & 0                  & 0                 & 0 & 0                & 0                 & 0.0797101121607294 & 0.0915810738791538 & 0                 & 0                  & 0                  & 0 & 0.0966511708429312 & 0                 & 0                 & 0                & 0                  & 0                  & 0 &                   & 0.0935697017917679 & 0                 & 0.235227625639303  & 0                  & 0                 & 0                 & 0                 & 0                  & 0                  & 0.188869526980421  & 0                 & 0.0979299280575153 & 0.30791561586182  & 0 & 0.0836747744254603 & 0                  & 0.0852059821105915 & 0.105515791812029  & 0 & 0                  & 0                  & 0                  & 0 & 0                  &   & 0.188560327947462  & 0 & 0.0938085545360289 & 0                  & 0                  & 0                  & 0                  & 0                  & 0                 & 0                 & 0                 & 0                 & 0.114071903427725 & 0.0989644521476672 & 0                & 0                  & 0.191850204003467  & 0.0853204459319306 & 0.325673397745138  & 0.101609675576378  & 0.446410138972841  & 0                & 0                 & 0.0835899948058695 & 0                 & 0                 & 0.102839867754536 & 0                  & 0.093152155766978  & 0                  & 0                 & 0                  & 0                & 0.0886645149587747 & 0                  & 0                 & 0.0811286493604865 & 0.085248172312891  & 0.109348300507203 & 0                  & 0                & 0 &                    & 0.10771194543179  & 0                 & 0.37904447746172   & 0                 & 0.0774590841110978 & 0                  & 0.0862922100761674 & 0                  & 0                & 0                  & 0                  & 0 & 0.0887982842357787 & 0 & 0.191258153341712 & 0 & 0.193335225845109  & 0.0679959440989501 &                   & 0.0716904943776971 & 0 & 0                 & 0                 & 0                 & 0.0955159920866373 &                    & 0                  & 0                 & 0                 & 0                  & 0                  & 0                  & 0                  &                   & 0                  & 0.108971961828326  & 0                  & 0                 & 0                  &                   & 0                  & 0.106083088729548  & 0.183922186706285 & 0                 & 0                  & 0 &                    & 0 & 0                  & 0                  & 0                 & 0                  & 0                 & 0.0827534210832989 & 0                 & 0                 & 0.205246823717364  & 0.12080898507016  &                    & 0                 & 0                  & 0                  & 0                 & 0.0952509463976275 & 0                  & 0                  & 0                 & 0.305556125229229 & 0                 & 0                  & 0.107144087814594 & 0.101640963086035 & 0.193290719980112 & 0                 & 0                 & 0.185465794543199  & 0                 & 0                 & 0.101257325625728  & 0                  & 0                 & 0                 & 0.174460155305123 & 0                 & 0                 & 0                  & 0                 & 0                  &                   & 0.0919838385170123 & 0.275562847638683  & 0                 & 0.1997378500592    & 0                  & 0                  & 0                 & 0                & 0                  & 0                  & 0                  & 0                  & 0.0845122078986121 & 0 & 0                  & 0                 & 0                  & 0                  & 0                  & 0                 & 0.0842754975351821 & 0 & 0                 & 0                 & 0.108281868491975  & 0.190565204838358  &   & 0                  & 0                 & 0                  & 0                 & 0 & 0                 & 0                 &                    & 0.188374677457405  & 0.503064681198113  & 0.22678006441187  & 0.608705803904613 & 0.160649532626467  & 0                 & 0                  & 0.0955169838768016 & 0                 & 0                 & 0 & 0 & 0.0940834174314213 & 0                  & 0                 & 0.254769067339013  & 0.212766170021943 & 0.608984695003398  &                    & 0.0960250477929918 & 0.310438657788261  &                    & 0                  & 0                  & 0                  & 0                  & 0 & 0                 & 0                  & 0                 & 0                  & 0                 & 0                  & 0                 \\\\\n",
+       "\t62 & 0                  & 0                  & 0.11430458769156   & 0.0931968819518542 & 0.0882213669482593 & 0.0929543917995141 & 0                  & 0.102627304422923 & 0.0670884792982441 & 0                 & 0                 & 0                 & 0                  & 0.0918249101029785 & 0                  & 0 & 0                 & 0                  & 0 & 0.294134605165406 & 0                 & 0                 & 0                 & 0.18443754070157   & 0                 & 0.104159580434962 & 0.0835384473187352 & 0                 &                    & 0                  & 0                  & 0                  & 0.0848535154019347 &                   & 0                  & 0.0818123792143367 & 0                 & 0                  &                   & 0.182353844098183 & 0.200988743083025  & 0                 & 0 & 0                & 0.211388738478887 & 0.0797101121607294 & 0.0915810738791538 & 0                 & 0                  & 0                  & 0 & 0.0966511708429312 & 0                 & 0                 & 0                & 0                  & 0                  & 0 &                   & 0.0935697017917679 & 0.212678861743994 & 0.0901129204692304 & 0.0775515965980965 & 0.101089713296182 & 0                 & 0                 & 0                  & 0.295211854481483  & 0.191965088894825  & 0                 & 0                  &                   & 0 & 0                  & 0                  & 0.198618395385145  & 0.0928278224363832 & 0 & 0.085004623664241  & 0.0874292338286494 & 0                  & 0 & 0                  & 0 & 0.106749513223136  & 0 & 0                  & 0                  & 0                  & 0.229327827951321  & 0                  & 0                  & 0                 & 0                 & 0                 & 0                 & 0.114071903427725 & 0.191720492326526  & 0                & 0                  & 0.279971517297782  & 0.180391414131182  & 0.31241123934066   & 0                  & 0.0973361470742741 & 0                & 0                 & 0.279854615294902  & 0.098669410593873 & 0                 & 0.193081485469552 & 0.0978316836547648 & 0.189995692545048  & 0                  & 0                 & 0.0919705138204908 & 0                & 0.0886645149587747 & 0.0782757003395537 & 0                 & 0.0811286493604865 & 0.085248172312891  & 0                 & 0                  & 0                & 0 & 0.388555360314163  & 0                 & 0                 & 0.408113201532677  & 0                 & 0                  & 0                  & 0.0811086930773953 & 0.18421950350671   & 0                & 0.122448766402609  & 0.0846998407146721 & 0 & 0                  & 0 & 0.2506185383147   &   & 0.0943100943313482 &                    & 0.130235187748244 & 0                  & 0 & 0.103330191893006 & 0                 & 0                 & 0                  &                    & 0                  & 0                 & 0                 & 0                  & 0                  & 0.223414513157768  & 0                  & 0.193949216923161 & 0.0893127699454693 & 0.202825151823899  & 0.0993692930227954 & 0                 & 0.0876078386844882 & 0.469543381126996 & 0                  & 0.2057850932732    & 0                 & 0                 & 0                  & 0 & 0.186923834413798  & 0 & 0.0934337175559566 & 0.0877377043124563 & 0                 & 0.0784298616695118 & 0                 & 0                  & 0                 & 0                 & 0.0919052671739612 & 0.12080898507016  & 0.0809097775938483 & 0.116255029660335 & 0.193746737347737  & 0                  & 0                 & 0.212792352578151  & 0.0684644994836425 & 0.0853716597936949 & 0                 & 0.322388038468932 & 0                 & 0                  & 0.194414035300917 & 0.101640963086035 & 0.212850555234319 & 0                 & 0.107593284757171 & 0.374003354421907  & 0                 & 0                 & 0                  & 0                  & 0                 & 0                 & 0                 & 0                 & 0                 & 0.0897681031074493 & 0                 & 0                  &                   &                    & 0                  & 0.178117471276828 & 0.1997378500592    & 0.0932076429762967 & 0                  & 0                 & 0                & 0.182844970000298  & 0.098303362356919  & 0.0883341787312145 & 0                  & 0.0845122078986121 & 0 & 0.0954550345076911 & 0                 & 0                  & 0                  & 0                  & 0.103424032287382 & 0                  &   & 0                 & 0                 & 0.248262202482924  & 0.0939091466230201 & 0 & 0.0934736283760859 & 0.109732335770615 & 0.0865058250009998 & 0                 & 0 & 0                 & 0.082922209594186 & 0.41520093525917   & 0.0975487856769551 & 0.288383792639003  & 0.108612539835336 &                   & 0.0941832008891862 & 0                 & 0                  & 0.305872611677792  & 0                 & 0                 & 0 & 0 & 0                  & 0                  & 0                 & 0                  & 0.230951959852688 &                    & 0.157469442636284  & 0                  & 0.0900264607882744 & 0.315074643752906  & 0                  & 0                  & 0.296038907177408  & 0                  & 0 & 0                 & 0.0771395687672651 & 0                 & 0                  & 0                 & 0.0918341476272802 & 0                 \\\\\n",
+       "\t75 & 0                  & 0                  & 0                  & 0                  & 0                  & 0.220023979487093  & 0.0851088107225124 & 0                 &                    & 0                 & 0.105808515262278 & 0                 & 0                  & 0                  & 0.166946446509506  & 0 & 0                 & 0                  & 0 & 0                 & 0.108840246554158 &                   & 0.189341865099418 & 0.0975650570842767 & 0.111176725797253 & 0                 & 0.10984502053461   & 0.10082624827698  & 0.114203559360346  & 0                  & 0                  & 0                  & 0                  &                   & 0                  & 0                  & 0                 & 0                  & 0.28686393024474  & 0                 & 0.0954895167721464 & 0                 & 0 & 0                & 0                 & 0.0797101121607294 &                    & 0                 & 0.0911697160024993 & 0                  & 0 & 0.20093216976539   &                   & 0.208272934804943 & 0                & 0                  & 0.0870517128920195 & 0 &                   & 0                  & 0                 & 0                  & 0                  &                   & 0                 & 0                 & 0                  & 0                  & 0                  & 0                 & 0                  & 0.208826059464689 & 0 & 0                  & 0                  & 0.175858312471778  & 0.120547067536458  & 0 & 0                  & 0.0874292338286494 & 0                  & 0 & 0                  & 0 & 0                  & 0 & 0                  & 0                  & 0                  & 0.0864877511079109 & 0                  & 0.0958727998772289 & 0                 & 0                 & 0.109048122021358 & 0.197764400745113 & 0.114071903427725 & 0.0869423765855306 & 0                & 0                  & 0.0968713107523004 &                    & 0.188024734840077  & 0                  & 0                  & 0.20218606294526 & 0                 & 0.0835899948058695 & 0                 & 0                 & 0.287757024959076 & 0.108124146783042  & 0.189687838488628  & 0.269056813583545  & 0.178475964121695 & 0                  & 0                & 0.271494043901648  & 0.133800512909033  & 0.109908645013974 & 0.183038287542212  & 0.413360758044857  & 0                 & 0                  & 0                & 0 & 0.0926538287463791 & 0                 & 0                 & 0.0950017682718338 & 0                 & 0                  & 0                  & 0                  & 0                  & 0                & 0.0940273641234556 & 0                  & 0 & 0                  & 0 & 0.136112017071625 & 0 & 0                  & 0.143550847644813  & 0                 & 0                  & 0 & 0                 & 0                 & 0.103802655884151 & 0                  & 0                  & 0                  & 0                 & 0                 & 0                  & 0                  & 0                  & 0                  & 0.156565464566679 & 0.147143181109319  &                    & 0.192694020414123  & 0.113431464454561 & 0                  & 0                 & 0                  & 0.0938907575801492 & 0                 & 0                 & 0                  & 0 & 0                  & 0 & 0                  & 0.11307362580797   & 0.100834702697012 & 0                  & 0                 & 0                  & 0                 & 0                 & 0                  & 0.203286806460454 & 0                  & 0                 & 0.117244574149161  & 0                  & 0                 & 0                  & 0.103124561081552  & 0                  & 0                 & 0.104889999988286 & 0                 & 0                  & 0.19462686918183  & 0.307696007850036 &                   & 0.109339946058233 & 0                 & 0.185465794543199  & 0                 & 0                 & 0                  & 0                  & 0                 & 0                 & 0                 & 0                 & 0                 & 0.0965752515062326 & 0                 & 0                  & 0                 & 0.0941402186893488 & 0                  & 0                 &                    & 0                  & 0                  & 0                 &                  & 0                  & 0.179375986588291  & 0.0971344690199674 & 0.0872905129831203 & 0.179392609992933  & 0 & 0                  & 0                 & 0                  & 0                  & 0.0807864041970915 & 0                 & 0                  & 0 & 0                 & 0                 & 0.291425017959326  & 0.0939091466230201 & 0 & 0                  & 0                 & 0.122868881711881  & 0                 & 0 & 0                 & 0                 & 0                  & 0                  & 0.0833468078335435 & 0                 & 0                 & 0                  & 0                 & 0                  & 0.0955169838768016 & 0                 & 0.30643756259631  & 0 & 0 & 0                  & 0                  & 0                 & 0                  & 0                 & 0.0889747388739429 & 0                  & 0.0848259345517528 & 0                  & 0                  & 0.0816738397974637 & 0.252123469266324  & 0                  & 0                  & 0 & 0                 & 0                  & 0.106024261650271 & 0                  & 0.117373736699035 & 0                  & 0                 \\\\\n",
+       "\\end{tabular}\n"
+      ],
+      "text/markdown": [
+       "\n",
+       "A matrix: 6 × 285 of type chr\n",
+       "\n",
+       "| <!--/--> | a.perfect.circle | abba | ac.dc | adam.green | aerosmith | afi | air | alanis.morissette | alexisonfire | alicia.keys | ⋯ | timbaland | tom.waits | tool | tori.amos | travis | trivium | u2 | underoath | volbeat | yann.tiersen |\n",
+       "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n",
+       "| 1 | 0                  | 0                  | 0.204405399744717  | 0                  | 0.266174512273766  | 0                  | 0.118139774940785  | 0.186878798622001 | 0                  | 0                 | ⋯ | 0                  | 0                  | 0 | 0                 | 0.0954959224350293 | 0                 | 0                  | 0                 | 0                  | 0                  |\n",
+       "| 33 | 0.0823426024461794 | 0                  | 0.0959115320210641 | <!----> | 0.0888852208491466 | 0                  | 0.190638390075421  | 0.175416279232336 | 0.069720392848255  | 0                 | ⋯ | 0.0821721486819862 | 0.0865244527726245 | 0 | 0.086036189972276 | 0.349529941129281  | 0                 | 0.0945433380923042 | 0                 | 0.0855854486135743 | 0.0900749561470353 |\n",
+       "| 42 | 0                  | 0.0897665536183953 | 0                  | 0                  | 0                  | 0                  | 0                  | 0                 | 0                  | 0                 | ⋯ | 0                  | 0                  | 0 | 0.167548675471972 | 0                  | 0.10722231393357  | 0                  | 0                 | 0                  | 0                  |\n",
+       "| 51 | 0.0823426024461794 | 0.0835681135086085 | 0                  | 0.0835017734266233 | 0                  | 0.0929543917995141 | 0                  | 0                 | 0.0670884792982441 | 0.081037422331836 | ⋯ | 0                  | 0                  | 0 | 0                 | 0                  | 0                 | 0                  | 0                 | 0                  | 0                  |\n",
+       "| 62 | 0                  | 0                  | 0.11430458769156   | 0.0931968819518542 | 0.0882213669482593 | 0.0929543917995141 | 0                  | 0.102627304422923 | 0.0670884792982441 | 0                 | ⋯ | 0.296038907177408  | 0                  | 0 | 0                 | 0.0771395687672651 | 0                 | 0                  | 0                 | 0.0918341476272802 | 0                  |\n",
+       "| 75 | 0                  | 0                  | 0                  | 0                  | 0                  | 0.220023979487093  | 0.0851088107225124 | 0                 | <!----> | 0                 | ⋯ | 0                  | 0                  | 0 | 0                 | 0                  | 0.106024261650271 | 0                  | 0.117373736699035 | 0                  | 0                  |\n",
+       "\n"
+      ],
+      "text/plain": [
+       "   a.perfect.circle   abba               ac.dc              adam.green        \n",
+       "1  0                  0                  0.204405399744717  0                 \n",
+       "33 0.0823426024461794 0                  0.0959115320210641                   \n",
+       "42 0                  0.0897665536183953 0                  0                 \n",
+       "51 0.0823426024461794 0.0835681135086085 0                  0.0835017734266233\n",
+       "62 0                  0                  0.11430458769156   0.0931968819518542\n",
+       "75 0                  0                  0                  0                 \n",
+       "   aerosmith          afi                air                alanis.morissette\n",
+       "1  0.266174512273766  0                  0.118139774940785  0.186878798622001\n",
+       "33 0.0888852208491466 0                  0.190638390075421  0.175416279232336\n",
+       "42 0                  0                  0                  0                \n",
+       "51 0                  0.0929543917995141 0                  0                \n",
+       "62 0.0882213669482593 0.0929543917995141 0                  0.102627304422923\n",
+       "75 0                  0.220023979487093  0.0851088107225124 0                \n",
+       "   alexisonfire       alicia.keys       ⋯ timbaland          tom.waits         \n",
+       "1  0                  0                 ⋯ 0                  0                 \n",
+       "33 0.069720392848255  0                 ⋯ 0.0821721486819862 0.0865244527726245\n",
+       "42 0                  0                 ⋯ 0                  0                 \n",
+       "51 0.0670884792982441 0.081037422331836 ⋯ 0                  0                 \n",
+       "62 0.0670884792982441 0                 ⋯ 0.296038907177408  0                 \n",
+       "75                    0                 ⋯ 0                  0                 \n",
+       "   tool tori.amos         travis             trivium          \n",
+       "1  0    0                 0.0954959224350293 0                \n",
+       "33 0    0.086036189972276 0.349529941129281  0                \n",
+       "42 0    0.167548675471972 0                  0.10722231393357 \n",
+       "51 0    0                 0                  0                \n",
+       "62 0    0                 0.0771395687672651 0                \n",
+       "75 0    0                 0                  0.106024261650271\n",
+       "   u2                 underoath         volbeat            yann.tiersen      \n",
+       "1  0                  0                 0                  0                 \n",
+       "33 0.0945433380923042 0                 0.0855854486135743 0.0900749561470353\n",
+       "42 0                  0                 0                  0                 \n",
+       "51 0                  0                 0                  0                 \n",
+       "62 0                  0                 0.0918341476272802 0                 \n",
+       "75 0                  0.117373736699035 0                  0                 "
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "head(data.germany.user.scores)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "This basically reads that for user 51 we would recommend abba first, then a perfect circle, and we would not recommend ACDC.\n",
+    "\n",
+    "This is not very pretty … so lets make it pretty:\n",
+    "We will create another holder matrix and for each user score we will sort the scores and store the artist names in rank order."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Lets make our recommendations pretty\n",
+    "  data.germany.user.scores.holder <- matrix(NA, nrow=nrow(data.germany.user.scores),ncol=100,dimnames=list(rownames(data.germany.user.scores)))\n",
+    "  for(i in 1:nrow(data.germany.user.scores)) \n",
+    "  {\n",
+    "    data.germany.user.scores.holder[i,] <- names(head(n=100,(data.germany.user.scores[,order(data.germany.user.scores[i,],decreasing=TRUE)])[i,]))\n",
+    "  }"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<table>\n",
+       "<caption>A matrix: 6 × 100 of type chr</caption>\n",
+       "<tbody>\n",
+       "\t<tr><th scope=row>1</th><td>flogging.molly</td><td>coldplay     </td><td>aerosmith            </td><td>the.beatles    </td><td>moby          </td><td>mando.diao     </td><td>ac.dc       </td><td>bob.marley...the.wailers</td><td>korpiklaani      </td><td>oasis       </td><td>⋯</td><td>peter.fox    </td><td>the.wombats    </td><td>guns.n.roses            </td><td>massive.attack       </td><td>jamiroquai  </td><td>james.morrison   </td><td>rage.against.the.machine</td><td>mgmt              </td><td>pink.floyd </td><td>audioslave   </td></tr>\n",
+       "\t<tr><th scope=row>33</th><td>peter.fox     </td><td>gentleman    </td><td>red.hot.chili.peppers</td><td>kings.of.leon  </td><td>flyleaf       </td><td>oasis          </td><td>beatsteaks  </td><td>the.killers             </td><td>jason.mraz       </td><td>babyshambles</td><td>⋯</td><td>bjork        </td><td>nine.inch.nails</td><td>blur                    </td><td>beastie.boys         </td><td>billy.talent</td><td>editors          </td><td>good.charlotte          </td><td>goldfrapp         </td><td>hot.chip   </td><td>radiohead    </td></tr>\n",
+       "\t<tr><th scope=row>42</th><td>oomph.        </td><td>lacuna.coil  </td><td>rammstein            </td><td>schandmaul     </td><td>sonata.arctica</td><td>subway.to.sally</td><td>apocalyptica</td><td>marilyn.manson          </td><td>pink             </td><td>linkin.park </td><td>⋯</td><td>bob.dylan    </td><td>bob.marley     </td><td>bob.marley...the.wailers</td><td>breaking.benjamin    </td><td>bright.eyes </td><td>bruce.springsteen</td><td>cat.power               </td><td>christina.aguilera</td><td>clueso     </td><td>cocorosie    </td></tr>\n",
+       "\t<tr><th scope=row>51</th><td>the.subways   </td><td>the.kooks    </td><td>the.hives            </td><td>franz.ferdinand</td><td>jack.johnson  </td><td>bloc.party     </td><td>foo.fighters</td><td>amy.winehouse           </td><td>the.white.stripes</td><td>deichkind   </td><td>⋯</td><td>amon.amarth  </td><td>anti.flag      </td><td>aphex.twin              </td><td>apocalyptica         </td><td>arch.enemy  </td><td>as.i.lay.dying   </td><td>atb                     </td><td>atreyu            </td><td>audioslave </td><td>avril.lavigne</td></tr>\n",
+       "\t<tr><th scope=row>62</th><td>mando.diao    </td><td>the.fratellis</td><td>jack.johnson         </td><td>incubus        </td><td>peter.fox     </td><td>oasis          </td><td>the.wombats </td><td>foo.fighters            </td><td>the.offspring    </td><td>timbaland   </td><td>⋯</td><td>millencolin  </td><td>madonna        </td><td>disturbed               </td><td>the.chemical.brothers</td><td>norah.jones </td><td>hoobastank       </td><td>dire.straits            </td><td>beyonce           </td><td>johnny.cash</td><td>simple.plan  </td></tr>\n",
+       "\t<tr><th scope=row>75</th><td>hoobastank    </td><td>papa.roach   </td><td>the.prodigy          </td><td>sum.41         </td><td>good.charlotte</td><td>blink.182      </td><td>hans.zimmer </td><td>groove.coverage         </td><td>three.days.grace </td><td>afi         </td><td>⋯</td><td>amy.macdonald</td><td>amy.winehouse  </td><td>aphex.twin              </td><td>apocalyptica         </td><td>arcade.fire </td><td>arch.enemy       </td><td>arctic.monkeys          </td><td>babyshambles      </td><td>beck       </td><td>beirut       </td></tr>\n",
+       "</tbody>\n",
+       "</table>\n"
+      ],
+      "text/latex": [
+       "A matrix: 6 × 100 of type chr\n",
+       "\\begin{tabular}{r|llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll}\n",
+       "\t1 & flogging.molly & coldplay      & aerosmith             & the.beatles     & moby           & mando.diao      & ac.dc        & bob.marley...the.wailers & korpiklaani       & oasis        & johnny.cash  & muse           & the.clash           & amy.winehouse        & incubus                 & norah.jones      & dire.straits            & gorillaz             & alanis.morissette & blur          & misfits       & the.doors      & ramones        & blind.guardian   & bad.religion        & kate.nash          & crystal.castles & gentleman      & eric.clapton        & nouvelle.vague          & subway.to.sally & kaiser.chiefs     & bob.dylan           & in.extremo            & morcheeba        & kreator                 & finntroll   & portishead     & equilibrium     & bob.marley         & bloc.party           & iron.maiden    & air                        & nirvana        & jason.mraz        & motorhead               & nofx                & die.toten.hosen & thievery.corporation    & clueso           & david.bowie   & dark.tranquillity    & jimi.hendrix & arctic.monkeys & keane          & pearl.jam  & placebo          & amon.amarth       & the.postal.service       & deep.purple       & the.offspring & digitalism          & the.kooks         & razorlight            & black.sabbath   & ensiferum        & the.chemical.brothers   & bloodhound.gang & snow.patrol              & the.prodigy       & hammerfall       & manu.chao      & nickelback    & foo.fighters & death.cab.for.cutie & nightwish        & lacuna.coil     & franz.ferdinand & green.day    & kings.of.leon        & the.hives                & travis                   & the.white.stripes & beatsteaks      & linkin.park       & seeed                    & editors     & tenacious.d       & anti.flag         & farin.urlaub     & peter.fox     & the.wombats     & guns.n.roses             & massive.attack        & jamiroquai   & james.morrison    & rage.against.the.machine & mgmt               & pink.floyd  & audioslave   \\\\\n",
+       "\t33 & peter.fox      & gentleman     & red.hot.chili.peppers & kings.of.leon   & flyleaf        & oasis           & beatsteaks   & the.killers              & jason.mraz        & babyshambles & lily.allen   & travis         & the.postal.service  & hoobastank           & nickelback              & the.subways      & queens.of.the.stone.age & kate.nash            & green.day         & bloc.party    & the.fratellis & james.morrison & the.libertines & muse             & kaiser.chiefs       & panic.at.the.disco & rammstein       & damien.rice    & snow.patrol         & him                     & limp.bizkit     & breaking.benjamin & kanye.west          & avril.lavigne         & gorillaz         & the.hives               & papa.roach  & arctic.monkeys & franz.ferdinand & the.offspring      & kings.of.convenience & sufjan.stevens & r.e.m.                     & audioslave     & the.white.stripes & bullet.for.my.valentine & norah.jones         & the.national    & modest.mouse            & elliott.smith    & amy.winehouse & system.of.a.down     & mogwai       & air            & bright.eyes    & the.shins  & lostprophets     & maria.mena        & guano.apes               & interpol          & frank.sinatra & my.chemical.romance & nirvana           & placebo               & justice         & hans.zimmer      & the.used                & eminem          & bob.marley...the.wailers & alanis.morissette & the.streets      & bob.marley     & amy.macdonald & blink.182    & genesis             & robbie.williams  & jimmy.eat.world & cat.power       & scooter      & morcheeba            & the.wombats              & manu.chao                & the.decemberists  & nada.surf       & the.prodigy       & the.smiths               & oomph.      & james.blunt       & arcade.fire       & lacuna.coil      & bjork         & nine.inch.nails & blur                     & beastie.boys          & billy.talent & editors           & good.charlotte           & goldfrapp          & hot.chip    & radiohead    \\\\\n",
+       "\t42 & oomph.         & lacuna.coil   & rammstein             & schandmaul      & sonata.arctica & subway.to.sally & apocalyptica & marilyn.manson           & pink              & linkin.park  & cascada      & tori.amos      & scooter             & heaven.shall.burn    & parkway.drive           & all.that.remains & killswitch.engage       & bring.me.the.horizon & caliban           & atb           & hatebreed     & atreyu         & chimaira       & machine.head     & trivium             & simple.plan        & flyleaf         & flogging.molly & my.chemical.romance & kelly.clarkson          & sonic.syndicate & blind.guardian    & soilwork            & rob.zombie            & three.days.grace & bullet.for.my.valentine & manowar     & hoobastank     & finntroll       & abba               & howard.shore         & amy.macdonald  & die.apokalyptischen.reiter & dream.theater  & placebo           & children.of.bodom       & korpiklaani         & leona.lewis     & hans.zimmer             & deftones         & ensiferum     & dido                 & lady.gaga    & britney.spears & porcupine.tree & eluveitie  & a.perfect.circle & ac.dc             & adam.green               & aerosmith         & afi           & air                 & alanis.morissette & alexisonfire          & alicia.keys     & amon.amarth      & amy.winehouse           & anti.flag       & aphex.twin               & arcade.fire       & arch.enemy       & arctic.monkeys & audioslave    & babyshambles & bad.religion        & beastie.boys     & beatsteaks      & beck            & beirut       & belle.and.sebastian  & beyonce                  & billy.talent             & bjork             & black.eyed.peas & black.sabbath     & blink.182                & bloc.party  & bloodhound.gang   & blur              & boards.of.canada & bob.dylan     & bob.marley      & bob.marley...the.wailers & breaking.benjamin     & bright.eyes  & bruce.springsteen & cat.power                & christina.aguilera & clueso      & cocorosie    \\\\\n",
+       "\t51 & the.subways    & the.kooks     & the.hives             & franz.ferdinand & jack.johnson   & bloc.party      & foo.fighters & amy.winehouse            & the.white.stripes & deichkind    & oasis        & regina.spektor & the.streets         & crystal.castles      & the.killers             & the.strokes      & muse                    & rise.against         & babyshambles      & kaiser.chiefs & paramore      & flogging.molly & justice        & system.of.a.down & death.cab.for.cutie & editors            & the.fray        & peter.fox      & maria.mena          & queens.of.the.stone.age & the.libertines  & amy.macdonald     & my.chemical.romance & blink.182             & fall.out.boy     & hot.chip                & linkin.park & sum.41         & interpol        & panic.at.the.disco & manu.chao            & digitalism     & good.charlotte             & papa.roach     & frank.sinatra     & placebo                 & farin.urlaub        & deftones        & bullet.for.my.valentine & the.used         & the.offspring & kings.of.convenience & nirvana      & the.shins      & elliott.smith  & cocorosie  & green.day        & afi               & red.hot.chili.peppers    & breaking.benjamin & joy.division  & hans.zimmer         & beck              & bjork                 & jason.mraz      & flyleaf          & hoobastank              & die.toten.hosen & simple.plan              & stars             & dido             & gentleman      & abba          & adam.green   & mogwai              & a.perfect.circle & arcade.fire     & him             & alicia.keys  & belle.and.sebastian  & bob.marley...the.wailers & james.morrison           & katie.melua       & kanye.west      & alexisonfire      & ac.dc                    & aerosmith   & air               & alanis.morissette & all.that.remains & amon.amarth   & anti.flag       & aphex.twin               & apocalyptica          & arch.enemy   & as.i.lay.dying    & atb                      & atreyu             & audioslave  & avril.lavigne\\\\\n",
+       "\t62 & mando.diao     & the.fratellis & jack.johnson          & incubus         & peter.fox      & oasis           & the.wombats  & foo.fighters             & the.offspring     & timbaland    & david.guetta & arctic.monkeys & the.hives           & flogging.molly       & gentleman               & justice          & sum.41                  & the.strokes          & eminem            & lenny.kravitz & paramore      & nirvana        & coldplay       & bob.marley       & manu.chao           & linkin.park        & bloodhound.gang & rise.against   & die.toten.hosen     & panic.at.the.disco      & lily.allen      & nickelback        & good.charlotte      & death.cab.for.cutie   & farin.urlaub     & green.day               & mgmt        & audioslave     & jay.z           & seeed              & bloc.party           & flyleaf        & rihanna                    & the.ting.tings & kate.nash         & jimmy.eat.world         & my.chemical.romance & nelly.furtado   & ac.dc                   & fall.out.boy     & the.beatles   & the.killers          & pearl.jam    & editors        & babyshambles   & staind     & keane            & alanis.morissette & papa.roach               & daft.punk         & lostprophets  & godsmack            & seether           & gorillaz              & the.fray        & franz.ferdinand  & bullet.for.my.valentine & slipknot        & kaiser.chiefs            & the.libertines    & system.of.a.down & cocorosie      & tenacious.d   & mika         & rob.zombie          & adam.green       & afi             & digitalism      & guns.n.roses & muse                 & volbeat                  & amy.winehouse            & breaking.benjamin & crystal.castles & the.white.stripes & rage.against.the.machine & limp.bizkit & hans.zimmer       & serj.tankian      & aerosmith        & millencolin   & madonna         & disturbed                & the.chemical.brothers & norah.jones  & hoobastank        & dire.straits             & beyonce            & johnny.cash & simple.plan  \\\\\n",
+       "\t75 & hoobastank     & papa.roach    & the.prodigy           & sum.41          & good.charlotte & blink.182       & hans.zimmer  & groove.coverage          & three.days.grace  & afi          & deichkind    & cascada        & my.chemical.romance & funeral.for.a.friend & bullet.for.my.valentine & faithless        & panic.at.the.disco      & lostprophets         & green.day         & atreyu        & foo.fighters  & peter.fox      & him            & simple.plan      & seether             & guano.apes         & die.toten.hosen & anti.flag      & lily.allen          & limp.bizkit             & kanye.west      & justice           & hatebreed           & the.chemical.brothers & digitalism       & underoath               & nickelback  & beatsteaks     & fall.out.boy    & machine.head       & millencolin          & avril.lavigne  & heaven.shall.burn          & bad.religion   & parkway.drive     & evanescence             & as.i.lay.dying      & gorillaz        & trivium                 & all.that.remains & oasis         & killswitch.engage    & nofx         & misfits        & beastie.boys   & audioslave & serj.tankian     & flogging.molly    & rage.against.the.machine & enter.shikari     & the.offspring & bloodhound.gang     & jack.johnson      & red.hot.chili.peppers & jimmy.eat.world & system.of.a.down & manu.chao               & incubus         & bring.me.the.horizon     & the.subways       & disturbed        & silverstein    & chimaira      & farin.urlaub & eminem              & air              & the.used        & gentleman       & the.hives    & thievery.corporation & sonic.syndicate          & bob.marley...the.wailers & a.perfect.circle  & abba            & ac.dc             & adam.green               & aerosmith   & alanis.morissette & alicia.keys       & amon.amarth      & amy.macdonald & amy.winehouse   & aphex.twin               & apocalyptica          & arcade.fire  & arch.enemy        & arctic.monkeys           & babyshambles       & beck        & beirut       \\\\\n",
+       "\\end{tabular}\n"
+      ],
+      "text/markdown": [
+       "\n",
+       "A matrix: 6 × 100 of type chr\n",
+       "\n",
+       "| 1 | flogging.molly | coldplay      | aerosmith             | the.beatles     | moby           | mando.diao      | ac.dc        | bob.marley...the.wailers | korpiklaani       | oasis        | ⋯ | peter.fox     | the.wombats     | guns.n.roses             | massive.attack        | jamiroquai   | james.morrison    | rage.against.the.machine | mgmt               | pink.floyd  | audioslave    |\n",
+       "| 33 | peter.fox      | gentleman     | red.hot.chili.peppers | kings.of.leon   | flyleaf        | oasis           | beatsteaks   | the.killers              | jason.mraz        | babyshambles | ⋯ | bjork         | nine.inch.nails | blur                     | beastie.boys          | billy.talent | editors           | good.charlotte           | goldfrapp          | hot.chip    | radiohead     |\n",
+       "| 42 | oomph.         | lacuna.coil   | rammstein             | schandmaul      | sonata.arctica | subway.to.sally | apocalyptica | marilyn.manson           | pink              | linkin.park  | ⋯ | bob.dylan     | bob.marley      | bob.marley...the.wailers | breaking.benjamin     | bright.eyes  | bruce.springsteen | cat.power                | christina.aguilera | clueso      | cocorosie     |\n",
+       "| 51 | the.subways    | the.kooks     | the.hives             | franz.ferdinand | jack.johnson   | bloc.party      | foo.fighters | amy.winehouse            | the.white.stripes | deichkind    | ⋯ | amon.amarth   | anti.flag       | aphex.twin               | apocalyptica          | arch.enemy   | as.i.lay.dying    | atb                      | atreyu             | audioslave  | avril.lavigne |\n",
+       "| 62 | mando.diao     | the.fratellis | jack.johnson          | incubus         | peter.fox      | oasis           | the.wombats  | foo.fighters             | the.offspring     | timbaland    | ⋯ | millencolin   | madonna         | disturbed                | the.chemical.brothers | norah.jones  | hoobastank        | dire.straits             | beyonce            | johnny.cash | simple.plan   |\n",
+       "| 75 | hoobastank     | papa.roach    | the.prodigy           | sum.41          | good.charlotte | blink.182       | hans.zimmer  | groove.coverage          | three.days.grace  | afi          | ⋯ | amy.macdonald | amy.winehouse   | aphex.twin               | apocalyptica          | arcade.fire  | arch.enemy        | arctic.monkeys           | babyshambles       | beck        | beirut        |\n",
+       "\n"
+      ],
+      "text/plain": [
+       "   [,1]           [,2]          [,3]                  [,4]           \n",
+       "1  flogging.molly coldplay      aerosmith             the.beatles    \n",
+       "33 peter.fox      gentleman     red.hot.chili.peppers kings.of.leon  \n",
+       "42 oomph.         lacuna.coil   rammstein             schandmaul     \n",
+       "51 the.subways    the.kooks     the.hives             franz.ferdinand\n",
+       "62 mando.diao     the.fratellis jack.johnson          incubus        \n",
+       "75 hoobastank     papa.roach    the.prodigy           sum.41         \n",
+       "   [,5]           [,6]            [,7]         [,8]                    \n",
+       "1  moby           mando.diao      ac.dc        bob.marley...the.wailers\n",
+       "33 flyleaf        oasis           beatsteaks   the.killers             \n",
+       "42 sonata.arctica subway.to.sally apocalyptica marilyn.manson          \n",
+       "51 jack.johnson   bloc.party      foo.fighters amy.winehouse           \n",
+       "62 peter.fox      oasis           the.wombats  foo.fighters            \n",
+       "75 good.charlotte blink.182       hans.zimmer  groove.coverage         \n",
+       "   [,9]              [,10]        [,11] [,12]         [,13]          \n",
+       "1  korpiklaani       oasis        ⋯     peter.fox     the.wombats    \n",
+       "33 jason.mraz        babyshambles ⋯     bjork         nine.inch.nails\n",
+       "42 pink              linkin.park  ⋯     bob.dylan     bob.marley     \n",
+       "51 the.white.stripes deichkind    ⋯     amon.amarth   anti.flag      \n",
+       "62 the.offspring     timbaland    ⋯     millencolin   madonna        \n",
+       "75 three.days.grace  afi          ⋯     amy.macdonald amy.winehouse  \n",
+       "   [,14]                    [,15]                 [,16]       \n",
+       "1  guns.n.roses             massive.attack        jamiroquai  \n",
+       "33 blur                     beastie.boys          billy.talent\n",
+       "42 bob.marley...the.wailers breaking.benjamin     bright.eyes \n",
+       "51 aphex.twin               apocalyptica          arch.enemy  \n",
+       "62 disturbed                the.chemical.brothers norah.jones \n",
+       "75 aphex.twin               apocalyptica          arcade.fire \n",
+       "   [,17]             [,18]                    [,19]              [,20]      \n",
+       "1  james.morrison    rage.against.the.machine mgmt               pink.floyd \n",
+       "33 editors           good.charlotte           goldfrapp          hot.chip   \n",
+       "42 bruce.springsteen cat.power                christina.aguilera clueso     \n",
+       "51 as.i.lay.dying    atb                      atreyu             audioslave \n",
+       "62 hoobastank        dire.straits             beyonce            johnny.cash\n",
+       "75 arch.enemy        arctic.monkeys           babyshambles       beck       \n",
+       "   [,21]        \n",
+       "1  audioslave   \n",
+       "33 radiohead    \n",
+       "42 cocorosie    \n",
+       "51 avril.lavigne\n",
+       "62 simple.plan  \n",
+       "75 beirut       "
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "#The output of this will look like this:\n",
+    "head(data.germany.user.scores.holder)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# References\n",
+    "\n",
+    "Data Mining and Business Analytics with R\n",
+    "\n",
+    "This case is based on Professor Miguel Canela “Designing a music recommendation app”\n",
+    "\n",
+    "this Article is written in refernce with Salem Marafi's Collaborative filtering article "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "R",
+   "language": "R",
+   "name": "ir"
+  },
+  "language_info": {
+   "codemirror_mode": "r",
+   "file_extension": ".r",
+   "mimetype": "text/x-r-source",
+   "name": "R",
+   "pygments_lexer": "r",
+   "version": "3.6.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 1
+}

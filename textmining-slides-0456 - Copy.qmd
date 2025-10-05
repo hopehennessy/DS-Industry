@@ -1,0 +1,588 @@
+---
+title: "Working with text: Part 2"
+format: 
+  revealjs:
+      smaller: false
+      scrollable: true
+      theme: default
+      footer: "STA5073Z Data Science for Industry"
+      slide-number: true
+      show-slide-number: print
+      echo: true
+      embed-resources: true
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(stringr)
+library(lubridate)
+library(readr)
+library(tidytext)
+library(textdata) 
+library(topicmodels)
+load("data/dsfi-lexicons.Rdata")
+load('data/trump-tweets.RData')
+load('data/my_imdb_reviews.RData')
+reviews <- as_tibble(reviews)
+reviews$review <- as.character(reviews$review) 
+reviews$reviewId <- 1:nrow(reviews) 
+reviews$imdbId <- ifelse(reviews$imdbId == "0075314", "Taxi Driver", "Waterworld")
+```
+
+# Sentiment analysis
+
+## Basic idea
+
+![Source: Tidy Text Mining](images/tmwr_0201.png){width="600px," fig-align="center"}
+
+- existing dictionaries associate individual words with sentiments 
+- text is made up of individual words 
+- sentiment of whole text = sum of the sentiment of words making up the text.
+
+## Get sentiment dictionaries 
+
+```{r, eval = FALSE}
+afinn <- get_sentiments('afinn') 
+bing <- get_sentiments('bing') 
+nrc <- get_sentiments('nrc') 
+save(afinn, bing, nrc, file = "data/dsfi-lexicons.Rdata")
+```
+
+## Sentiment dictionary `afinn`
+
+Words given a positivity score between -5 (negative) and +5 (positive)
+
+```{r}
+head(afinn)
+table(afinn$value)
+```
+
+## Sentiment dictionary `bing`
+
+Words labelled as "positive" or "negative".
+
+```{r}
+head(bing)
+table(bing$sentiment)
+```
+
+## Sentiment dictionary `nrc`
+
+- Multiple labels, including "positive" and "negative".
+
+```{r}
+head(nrc)
+table(nrc$sentiment)
+```
+
+# Movie review example
+
+## Dataset
+
+160 reviews of each of *Taxi Driver* and *Waterworld*.
+
+```{r, echo=FALSE}
+reviews %>% filter(imdbId == "Taxi Driver") %>% head()
+```
+
+## Dataset
+
+160 reviews of each of *Taxi Driver* and *Waterworld*.
+
+```{r, echo=FALSE}
+reviews %>% filter(imdbId != "Taxi Driver") %>% head()
+```
+
+## Preprocessing
+
+Put into tidy format 
+
+```{r}
+tidy_reviews <- reviews %>% 
+  unnest_tokens(word, review, token = 'words', to_lower = T) %>%
+  filter(!word %in% stop_words$word)
+```
+
+## Join with sentiment lexicon
+
+```{r}
+tidy_reviews_sentiment <- tidy_reviews %>% 
+  left_join(bing, by = "word") %>%
+  rename(bing_sentiment = sentiment) %>%
+  mutate(bing_sentiment = ifelse(is.na(bing_sentiment), 'neutral', bing_sentiment))
+head(tidy_reviews_sentiment)
+```
+
+## Summarize
+
+10 most frequent positive words for each movie
+
+```{r}
+#| output-location: slide
+tidy_reviews_sentiment %>%
+  filter(bing_sentiment == 'positive') %>%
+  count(imdbId, word) %>%
+  group_by(imdbId) %>% filter(rank(desc(n)) <= 10) %>%
+  ggplot(aes(reorder(word,n),n)) + geom_col() + facet_wrap(~imdbId) + coord_flip() + xlab('')
+```
+
+## Summarize
+
+10 most frequent negative words for each movie
+
+```{r}
+#| output-location: slide
+tidy_reviews_sentiment %>%
+  filter(bing_sentiment == 'negative') %>%
+  count(imdbId, word) %>%
+  group_by(imdbId) %>% filter(rank(desc(n)) <= 10) %>%
+  ggplot(aes(reorder(word,n),n)) + geom_col() + facet_wrap(~imdbId) + coord_flip() + xlab('')
+```
+
+## Join with sentiment lexicon
+
+```{r}
+tidy_reviews_sentiment <- tidy_reviews_sentiment %>% 
+  left_join(nrc, by = "word") %>%
+  rename(nrc_sentiment = sentiment) 
+head(tidy_reviews_sentiment)
+```
+
+## Summarise
+
+- For each review, proportion of review belonging to each NRC sentiment
+- Then take means over reviews
+
+```{r}
+#| code-line-numbers: "1-3|4-5|6-7|8-9"
+#| output-location: slide
+tidy_reviews_sentiment %>%
+  add_count(imdbId, reviewId, name = "n_words") %>%
+  na.omit() %>%
+  group_by(imdbId, reviewId, nrc_sentiment) %>%
+  summarize(prop = n() / first(n_words)) %>% ungroup() %>%
+  group_by(imdbId, nrc_sentiment) %>%
+  summarize(mean_prop = mean(prop)) %>% ungroup() %>%
+  ggplot(aes(reorder(nrc_sentiment, mean_prop), mean_prop, fill = imdbId)) + 
+  geom_bar(stat = "identity", position = 'dodge') + coord_flip() + xlab('')
+```
+
+# Topic modelling
+
+# Basics and definitions
+
+## Components
+
+- **word** 
+  - basic unit of analysis (could be tokens more generally)
+  - element of a vocabulary indexed by $\{1,\dots,n\}$
+  - each word is a binary vector of length $n$, with 1 "1" and $n-1$ "0's"
+  - denoted by $w_i$ i.e. word $i$ is the $i$-th word in the vocabulary
+
+## Components
+
+- **document** 
+  - a sequence of $L$ words 
+  - denoted by $\mathbf{w} = (w^{(1)},w^{(2)},\dots,w^{(L)})$
+  - each $w^{(j)}$ is one word from the vocabulary i.e. one of the $w_i$ 
+  - the superscript $(1)$, $(2)$ etc denotes position, not word ID
+
+## Components
+
+- **corpus** 
+  - a collection of $N$ documents 
+  - denoted by $D = \{\mathbf{w}_1,\mathbf{w}_2,\dots,\mathbf{w}_N\}$.
+
+## Multinomial distribution
+
+- Multivariate extension of binomial distribution
+- Binomial: sample 100 coin flips. How many are heads? How many tails?
+- Multinomial: sample 100 dice rolls. How many 1's? 2's? 3's? etc 
+
+## Multinomial distribution
+
+- Random variables are frequency counts in each category $\mathbf{X}=(X_1,X_2,\dots,X_m)$
+- Parameters $n$ (number of trials), $\mathbf{p}=(p_1,p_2,\dots,p_m)$ with $\sum_{i=1}^m p_i=1$
+
+## Dirichlet distribution
+
+- Multivariate extension of beta distribution
+- Beta: used to model random variables constrained to lie between 0 and 1
+- Dirichlet: used to model random variables that must sum to one (e.g. proportions, probabilities)
+
+## Dirichlet distribution
+
+- Random variable is a vector whose elements must sum to one over categories $\mathbf{X}=(X_1,X_2,\dots,X_m)$
+- Parameters are $\alpha_1,\alpha_2,\dots,\alpha_m$ with $\alpha_i>0$
+- Often used as a conjugate prior for the multinomial probability parameters $\mathbf{p}$
+
+# Unigram model
+
+## Basic idea
+
+- Suppose a single word distribution applies to all docs
+- Parameters $\boldsymbol{\beta}= (p(w_1),\dots,p(w_n))$ give the probability of generating each word $i=1,\dots,n$ 
+- $\beta_i=p(w_i)$ is the probability of generating word $i$
+- This is called the word-topic distribution (for one topic)
+
+## Generative model
+
+To generate a document $j$:
+
+1. Select $L_j$, the number of words in the doc
+2. Make $L_j$ draws from the multinomial distribution defined by $\boldsymbol{\beta}$
+
+To generate a corpus repeat steps 1-2 $N$ times
+
+## Model estimation 
+
+- Say we have 7 words in vocab: the, cat, and, dog, lay, on, mat.
+- Say $\mathbf{p}=(1,4,10,15,20,21,29)/100$
+- What's the probability of generating "the dog lay on the mat"?
+
+. . . 
+
+- $0.01\times 0.15 \times 0.20 \times 0.21 \times 0.01 \times 0.29$
+
+. . . 
+- $=1.87\times 10^{-7}$
+
+## Model estimation 
+
+- Say we have 7 words in vocab: the, cat, and, dog, lay, on, mat.
+- Say $\mathbf{p}=(1,4,10,15,20,21,29)/100$
+- What's the probability of generating "lay the mat on the dog"?
+
+. . . 
+
+- same ($1.87\times 10^{-7}$)
+
+## Model estimation
+
+- What's the probability of generating "the dog lay on the mat"?
+- $0.01\times 0.15 \times 0.20 \times 0.21 \times 0.01 \times 0.29$
+- How to write this more generally?
+
+. . . 
+
+- $p(w_1)\times p(w_4) \times p(w_5) \times p(w_6) \times p(w_1) \times p(w_7)$
+- $p(w_1)^2 \times p(w_2)^0 \times p(w_3)^0 \times p(w_4)^1 \times p(w_5)^1 \times p(w_6)^1 \times p(w_7)^1$
+
+## Model estimation
+
+- Let $f_j(w_i)$ be number of times word $i$ appears in doc $j$
+- Then for doc $j$ $$p(\mathbf{w}_j)=\prod_{i=1}^{n} \beta_i^{f_j(w_i)}$$
+
+## Model estimation
+
+::: {.incremental}
+- Docs are independent, so $p(\mathbf{w}_j,\mathbf{w}_k)=p(\mathbf{w}_j)\times p(\mathbf{w}_k)$
+- Over all $N$ docs, $p(\mathbf{D})=\prod_{j=1}^N p(\mathbf{w}_j)$
+- $p(\mathbf{D})=\prod_{j=1}^N\prod_{i=1}^n p(w_i)^{f_j(w_i)}$
+- This is a likelihood, to be maximized
+:::
+
+# Mixture of unigrams
+
+## Basic idea
+
+- Idea: rather than one distribution generating words, there are several ($K$)
+- Each distribution can be interpreted as a **topic**
+- A topic is just a probability distribution over words
+- Each topic is a word distribution $\boldsymbol{\beta}_k$
+- A document can only belong to one topic
+
+## Basic idea
+
+::: columns
+::: {.column width="50%"}
+Previously:
+
+- One topic = a word distribution $\boldsymbol{\beta} = (p(w_1,\dots,p(w_n))$.  
+- All documents generated by $\boldsymbol{\beta}$ 
+
+:::
+::: {.column width="50%"}
+Now:
+
+- $K$ topics; each topic $k$ is a word distribution $$\boldsymbol{\beta}_k = p(w_1|z = k),\dots,p(w_n|z=k)$$.  
+- Each **document** is generated by a single latent topic $z\in\{1,\dots,K\}$.  
+- Mixture weights $\boldsymbol{\pi} = (p(z=1),\dots,p(z=k))$, $\sum_k \pi_k=1$.
+
+:::
+:::
+
+## Generative model
+
+Unigram model:
+
+1. Select $L_j$, the number of words in doc $j$
+2. Make $L_j$ draws from $\boldsymbol{\beta}_k$
+
+## Generative model
+
+Now:
+
+1. Select $L_j$, the number of words in doc $j$
+2. Select a topic $k$ by drawing once from $\pi$ 
+3. Make $L_j$ draws from $\boldsymbol{\beta}_k$
+
+To generate a corpus repeat steps 1-3 $N$ times
+
+## Model estimation
+
+Unigram model:
+
+$p(\mathbf{D})=\prod_{j=1}^N\prod_{i=1}^n p(w_i)^{f_j(w_i)}$
+
+Now: 
+
+$p(\mathbf{D})=\prod_{j=1}^N \color{red}{\sum_{k=1}^K \pi_k} \prod_{i=1}^n p(w_i|\color{red}{z = k})^{f_j(w_i)}$
+
+## Model estimation
+
+- Same vocab: the, cat, and, dog, lay, on, mat.
+- Two topics, with $p(z_1)=0.3$, $p(z_2)=0.7$:
+    - $\mathbf{p}_1=(1,4,10,15,20,21,29)/100$
+    - $\mathbf{p}_2=(10,10,10,10,20,20,20)/100$
+- What's the probability of generating "the dog lay on the mat"?
+    - From topic 1, $1.87\times 10^{-7}$
+    - From topic 2, $0.1^3\times 0.2^3 = 0.8\times 10^{-7}$
+    - Overall, $0.3[1.87\times 10^{-7}]+ 0.7[0.8\times 10^{-7}]$
+  
+# Probabilistic latent semantic indexing
+
+## Basic idea
+
+- with mixture-of-unigrams, each document comes from **one** topic
+- relax this so that 
+  - each word is generated from a single topic, 
+  - words in a document may be generated from different topics
+- with pLSI, each document has its own mixture of topics 
+- topic mixture for document $j$ is $\boldsymbol{\gamma}_j = (p(z=1|d_j),\dots,p(z=K|d_j))$
+- no prior on $\boldsymbol{\gamma_j}$
+
+## Basic idea
+
+::: columns
+::: {.column width="50%"}
+Previously:
+
+- $K$ distributions for words conditional on topic: $K\times$ $(1\times n)$ *word-topic probability distributions* $\boldsymbol{\beta}_k$
+- mixture distribution $\boldsymbol{\pi}$
+
+:::
+::: {.column width="50%"}
+
+Now:
+
+- $K$ distributions for words conditional on topic: $K\times$ $(1\times n)$ *word-topic probability distributions* $\boldsymbol{\beta}_k$, $k=1,\dots,K$
+- $N$ distributions for topics conditional on document: $N\times$ ($1\times K$) *document-topic probability* distributions $\boldsymbol{\gamma}_j$, $j=1,\dots,N$
+
+:::
+:::
+
+## Generative model
+
+To generate a document $j$:
+
+1. Generate the document-topic probabilities $\boldsymbol{\gamma}_j$
+2. Select $L_j$, the number of words in the doc
+3. For each word $1,2,\dots,L_j$
+    a. Select a topic $k$ by drawing once from $\boldsymbol{\gamma}_j$
+    b. Select a word by drawing once from $\boldsymbol{\beta}_k$
+
+To generate a corpus repeat steps 1-3 $N$ times
+
+## Model estimation
+
+MoU model:
+
+$p(\mathbf{D})=\prod_{j=1}^N \sum_{k=1}^K p(z_k) \prod_{i=1}^n p(w_i|z_k)^{f_j(w_i)}$
+
+Now
+
+$p(\mathbf{D})=\prod_{j=1}^N \sum_{k=1}^K p(z=k\color{red}{|d_j}) \prod_{i=1}^n p(w_i|\color{red}{z_k})^{f_j(w_i)}$
+
+## Model estimation
+
+- topic mixtures $p(z=k|d_j)$ estimated only for training documents 
+- can't apply to unseen documents
+- also parameters grow linearly with $N$, prone to overfitting
+
+## Model estimation
+
+- Problem is there is no probability model for the document-topic probabilities $p(z=k|d_j)$ 
+- So these end up as a large set of individual parameters linked to the training set
+- LDA solves this problem by defining a generative model for the document-topic probabilities
+
+# Latent Dirichlet Allocation
+
+## Basic idea
+
+- A draw from a Dirichlet distribution with parameters $(\alpha_1,\dots,\alpha_K)$ gives a vector of $K$ probabilities
+- These are the document-topic probabilities for one document
+
+- Put Dirichlet priors on **both**: 
+  - Document-topic mixtures $\boldsymbol{\gamma}_j\sim \text{Dir}(\boldsymbol{\alpha})$ 
+  - Topic-word distributions $\boldsymbol{\beta}_k\sim \text{Dir}(\boldsymbol{\eta})$ 
+- Yields a fully generative model that handles unseen documents 
+
+## Generative model
+
+1. For each topic $k=1,\dots,K$: draw $\boldsymbol{\beta}_k\sim \text{Dir}(\boldsymbol{\eta})$.  
+2. For each document $j=1,\dots,N$:  
+   - Draw $\boldsymbol{\gamma}_j\sim \text{Dir}(\boldsymbol{\alpha})$.  
+   - For each word $t=1,\dots,L_j$:  
+     - Select a topic $k$ by drawing once from $\boldsymbol{\gamma}_j$.  
+     - Select a word by drawing once from $\boldsymbol{\beta}_k$.
+    
+To generate a corpus repeat step 2 $N$ times
+
+## Model estimation
+
+**Hierarchical Bayesian model (LDA)**
+
+- **Level 1 (topics):**  $\boldsymbol{\beta}_k \sim \mathrm{Dir}(\boldsymbol{\eta}),\quad k=1,\dots,K$
+
+- **Level 2 (documents):**  $\boldsymbol{\gamma}_j \sim \mathrm{Dir}(\boldsymbol{\alpha}),\quad j=1,\dots,N,$.
+
+- **Level 3 (words in document $j$):** for $t=1,\dots,L_j$  
+  $$z_{j,t}\mid \boldsymbol{\gamma}_j \sim \mathrm{Categorical}(\boldsymbol{\gamma}_j),$$
+  $$w_{j,t}\mid z_{j,t}=k,\ \boldsymbol{\beta} \sim \mathrm{Categorical}(\boldsymbol{\beta}_k).$$
+
+Can use standard ways to estimate parameters of Bayesian models: MCMC, Gibbs sampling, variational Bayes.
+
+# Movie review example
+
+## Recap 
+
+160 reviews of each of *Taxi Driver* and *Waterworld*.
+
+```{r, echo=FALSE}
+reviews %>% filter(imdbId == "Taxi Driver") %>% head()
+```
+
+Already put into tidy format 
+
+## Preprocessing
+
+Counts of number of times each word appears in each document
+
+```{r}
+reviews_tdf <- tidy_reviews %>%
+  group_by(reviewId,word) %>%
+  count() %>%  
+  ungroup() 
+```
+
+## Preprocessing
+
+Reshape long to wide and put into the `DocumentTermMatrix` class needed by package **topicmodels**.
+
+```{r}
+dtm_reviews <- reviews_tdf %>% 
+  cast_dtm(reviewId, word, n)
+```
+
+## Running LDA
+
+```{r}
+reviews_lda <- LDA(dtm_reviews, k = 2, control = list(seed = 1234))
+str(reviews_lda)
+```
+
+## Running LDA
+
+Let's look at:
+
+- `beta`: word-topic probabilities
+* `gamma`: document-topic probabilities
+
+## word-topic probabilities
+
+```{r}
+reviews_topics <- tidy(reviews_lda, matrix = 'beta')
+head(reviews_topics)
+```
+
+## word-topic probabilities
+
+Plot top 20 terms used in each topic
+
+```{r}
+#| output-location: slide
+reviews_topics %>%
+  group_by(topic) %>%
+  slice_max(n = 20, order_by = beta) %>% ungroup() %>%
+  arrange(topic, -beta) %>%
+  ggplot(aes(reorder(term, beta), beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = 'free') + coord_flip()
+```
+
+## word-topic probabilities
+
+- Which words have the greatest *difference* in beta values between Topic 1 and Topic 2?
+- Rank by $log_2(\beta_2/\beta_1)$
+
+## word-topic probabilities
+
+```{r, echo=FALSE}
+beta_spread <- reviews_topics %>%
+  mutate(topic = paste0('topic', topic)) %>%
+  pivot_wider(names_from = topic, values_from = beta) %>%
+  filter(topic1 > .001 | topic2 > .001) %>%
+  mutate(log_ratio = log2(topic2 / topic1))
+
+beta_spread %>%
+  group_by(direction = log_ratio > 0) %>%
+  top_n(10, abs(log_ratio)) %>%
+  ungroup() %>%
+  mutate(term = reorder(term, log_ratio)) %>%
+  ggplot(aes(term, log_ratio)) +
+  geom_col() +
+  labs(y = 'Log2 ratio of beta in topic 2 / topic 1') +
+  coord_flip()
+```
+
+## document-topic probabilities
+
+```{r}
+gamma <- tidy(reviews_lda, matrix = 'gamma') 
+gamma |> 
+  group_by(topic) |> 
+  slice_sample(n = 5)
+```
+
+## document-topic probabilities
+
+To see if allocations make sense join with `reviews` data frame
+
+```{r}
+reviews_gamma <- left_join(reviews %>% mutate(reviewId = as.character(reviewId)), 
+                           gamma,
+                           by = c("reviewId" = "document"))
+```
+
+## document-topic probabilities
+
+How many of the reviews for Topic 1 (*Taxi Driver*) did the LDA estimate to be *mostly* about Topic 2 (*Waterworld*)?
+
+```{r}
+reviews_gamma %>% 
+  filter(imdbId == "Taxi Driver") %>%
+  filter(topic == 2 & gamma > 0.5) 
+```
+
+## document-topic probabilities
+
+How many of the reviews for Topic 2 (*Waterworld*) did the LDA estimate to be *mostly* about Topic 1 (*Taxi Driver*)?
+
+```{r}
+reviews_gamma %>% 
+  filter(imdbId == "Waterworld") %>%
+  filter(topic == 1 & gamma > 0.5) 
+```

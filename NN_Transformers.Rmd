@@ -1,0 +1,327 @@
+---
+title: "Transformers"
+author: "Hope Hennessy"
+date: "2025-09-30"
+output: word_document
+---
+
+Transformers were introduced to overcome the limitations of older sequence models like CNNs and RNNs, especially in handling:
+
+* Long-term dependencies – relationships between distant points in a sequence.
+* Parallelization – ability to train quickly by processing all tokens simultaneously.
+* Flexibility – capturing both local and global context.
+
+
+## Limitations
+
+CNNs:
+
+* Excellent at detecting local patterns (e.g, edges in images, short-term trends in sequences).
+* Limitation: Fixed receptive field; cannot naturally capture long-range dependencies or temporal relationships beyond the filter size.
+* Workarounds like stacking more layers or using dilated convolutions exist, but they are less flexible than sequence-aware models.
+
+RNNs:
+
+* Process sequences one step at a time, updating the hidden state at each step.
+* Challenges:
+    * Hard to parallelize: Each step depends on the previous, making training slower.
+    * Long-term dependencies: Vanilla RNNs suffer from vanishing or exploding gradients, making it difficult to learn relationships over long sequences.
+* Variants like LSTM or GRU mitigate some of these issues via gating mechanisms but still cannot match the full parallelism of Transformers.
+
+Transformers:
+
+* Use attention mechanisms to directly compare every input token with every other token.
+* Advantages:
+    * No recurrence or convolution $\to$ fully parallelizable over sequence length.
+    * Can model long-range dependencies efficiently, capturing global context.
+    * Scale well to large datasets and long sequences.
+    * Flexible architecture for diverse tasks (text, images, time series).
+* Trade-offs: Computational cost grows quadratically with sequence length (though mitigations exist).
+
+
+
+## Core Idea: Attention
+
+The core idea is that each token **attends** to others to build a richer representation.
+
+* Input is a sequence of tokens.
+* Each token is projected into three vectors:
+    * Query (q) – “What am I looking for?”
+    * Key (k) – “What information do I hold?”
+    * Value (v) – “What content can I pass on?”
+
+Attention computes similarity between queries and keys to weight values: each token updates its representation based on all other tokens in the sequence.
+
+
+## Attention Formula
+
+$$
+\text{Attention}(Q, K, V) =
+\text{softmax}\!\left(\frac{QK^\top}{\sqrt{d_k}}\right)V
+$$
+
+- $Q$: queries, $K$: keys, $V$: values  
+- $\sqrt{d_k}$: scaling factor for numerical stability.  
+- Softmax ensures weights sum to 1.  
+- Output: each token’s new representation incorporates context from all tokens.
+
+* $QK^\top$: similarity score between tokens.
+* Softmax: converts scores into probabilities (weights sum to 1).
+* Multiplying by $V$: combines token content weighted by these probabilities.
+
+
+## Numerical example
+
+### Step 1: Inputs
+
+Suppose we have 3 tokens, each represented by a 2D vector:
+
+$$
+X = \begin{bmatrix}
+1 & 0 \\
+0 & 1 \\
+1 & 1
+\end{bmatrix}
+$$
+
+We define **trainable projection matrices** (here fixed for illustration):
+
+$$
+W^Q=\begin{bmatrix}1&1\\0&1\end{bmatrix},\;
+W^K=\begin{bmatrix}1&0\\1&1\end{bmatrix},\;
+W^V=\begin{bmatrix}0.5&1\\1&0\end{bmatrix}
+$$
+## # Step 2: Compute Q, K, V
+
+Queries:
+
+$$
+Q = XW^Q =
+\begin{bmatrix}
+1 & 1 \\
+0 & 1 \\
+1 & 2
+\end{bmatrix}
+$$
+
+Keys:
+
+$$
+\quad
+K = XW^K =
+\begin{bmatrix}
+1 & 0 \\
+1 & 1 \\
+2 & 1
+\end{bmatrix}
+$$
+
+Values:
+
+$$
+V = XW^V =
+\begin{bmatrix}
+0.5 & 1 \\
+1 & 0 \\
+1.5 & 1
+\end{bmatrix}
+$$
+
+
+
+### Step 3: Compute Attention for Token 1
+
+Query for token 1: $q_1 = [1, 1]$
+
+$$
+\begin{aligned}
+s_1 &= (q_1 \cdot k_1)/\sqrt{2} = 1/\sqrt{2} \\
+s_2 &= (q_1 \cdot k_2)/\sqrt{2} = 2/\sqrt{2} \\
+s_3 &= (q_1 \cdot k_3)/\sqrt{2} = 3/\sqrt{2}
+\end{aligned}
+$$
+
+Softmax normalization:
+
+$$\boldsymbol{s} = [0.140, 0.284, 0.576]$$
+
+Output vector for token 1:
+
+$$
+\begin{aligned}
+
+o_1 &= 0.140[0.5,1] + 0.284[1,0] + 0.576[1.5,1] \\
+&= [1.218,\,0.716]
+\end{aligned}
+$$
+
+### Final Attention Output
+
+Attention weights ($A$) & updated token representations ($O$):
+
+$$
+A =
+\begin{bmatrix}
+0.140 & 0.284 & 0.576 \\
+0.198 & 0.401 & 0.401 \\
+0.074 & 0.306 & 0.620
+\end{bmatrix} ,\quad
+O =
+\begin{bmatrix}
+1.21 &	0.72 \\
+1.10 &	0.60 \\
+1.27 &	0.69
+\end{bmatrix} 
+$$
+
+
+
+### Interpreting the Attention Weight Matrix
+
+$A$ is a 3×3 matrix where:
+
+* Rows = query token (the "focusing" token).
+* Columns = key token (the "source" token being attended to).
+
+Example:
+
+* First row: [0.140, 0.284, 0.576]
+* Token 1 is looking at itself, token 2, and token 3.
+* It places 14% of its focus on itself, 28% on token 2, and 58% on token 3.
+
+Key Properties:
+
+1. Each row sums to 1 $\to$ the softmax normalization ensures attention is a weighted average:
+
+$$
+\sum_{j=1}^3 A_{ij} = 1
+$$
+
+2. These weights are **learned relationships** between tokens:
+   * Higher weight = stronger relationship or influence
+   * E.g. token 3 has a high weight of 0.620 in its own row, meaning it primarily relies on itself but also incorporates information from others
+
+
+## Interpreting $O$ — Updated Token Representations
+
+The matrix $O$ contains the **final output vectors** from the attention mechanism.
+
+* Each row $o_i$ corresponds to one token's new embedding
+* Computed by combining the value vectors ($V$) using the attention weights from that token's row:
+
+$$
+o_i = \sum_{j=1}^3 A_{ij} V_j
+$$
+
+Example:
+
+For Token 1:
+
+$$
+o_1 = 0.140 \cdot V_1 + 0.284 \cdot V_2 + 0.576 \cdot V_3 = [1.21, 0.72]
+$$
+
+This vector now encodes **Token 1's original meaning + contextual information** from Tokens 2 and 3, weighted by their relevance
+
+### Why $O$ is More Powerful than $X$
+
+1. The original input tokens $X$ are **isolated**, containing no information about other tokens
+
+2. After self-attention:
+   * Each $o_i$ is **context-aware**, enriched with information from the **entire sequence**
+   * Example use cases:
+      * In language models: $o_1$ could represent a word's meaning **in context**
+      * In time series: $o_1$ could combine signals from past, present, and future steps
+
+
+
+* $A$ answers: *"Which tokens matter most to me?"*
+   * It's like a **map of relationships** between tokens
+
+* $O$ answers: *"Given those relationships, what is my updated understanding?"*
+   * It's a **contextual embedding** ready for downstream tasks like prediction or classification
+
+This interpretation is crucial because in deep transformers:
+
+* **Multiple attention heads** produce multiple $A$ and $O$ matrices in parallel
+* Later layers refine and combine them
+* Resulting in extremely rich, hierarchical representations of the input data
+
+
+## What happens to the $o_i$
+
+
+Each $o_i$ goes through:
+
+1. Feed-forward network: nonlinear transformation to refine features.
+2. Residual connection & Layer normalization $\to$ helps stabilize deep training.
+3. Decoder output layer that projects $o_i$ back into vocabulary space (for language tasks): $\hat{y}_i = \text{softmax}(o_i W^\top + b)$
+
+Result: a **probability distribution over next possible tokens**
+
+
+## Training Target and Loss
+
+* Goal: Predict the **next word** given a sequence.
+* Input: tokens $x_1, x_2, ..., x_t$
+* Target: the next token $x_{t+1}$
+* Prediction: $\hat{y}_t$ from the final $o_t$ 
+
+Loss function: Cross-entropy between $\hat{y}_t$ and the true token.
+
+Gradients flow backward through:
+
+1. Output projection,
+2. Transformer layers,
+3. Embedding layer.  
+
+
+
+## Multi-Head Attention
+
+Instead of a single attention computation:
+
+* **Multiple heads** learn different aspects of relationships - run in parallel
+* Each head has its own $W^Q, W^K, W^V$.
+
+### Analogy:
+- CNN: each filter detects a different feature (edges, shapes).
+- Transformer: each head focuses on different token relationships.
+
+
+## Full Transformer Block
+
+Architecture of one encoder block:
+
+1. Input tokens + positional encoding (to add order info).
+2. Multi-head attention $\to$ combined outputs.
+3. Residual connection + layer norm.
+4. Feed-forward network.
+5. Residual connection + layer norm.
+
+Stacking many blocks = deep Transformer.
+
+
+## Key Advantages
+
+1. Parallelism: Train on all tokens at once → huge speedup.
+2. Long-range dependencies: Global context captured easily.
+3. Specialization: Different attention heads focus on different relationships.
+4. Scalability: Foundation of modern LLMs like GPT, BERT. 
+
+
+## Summary
+
+Transformers revolutionized sequence modeling by:
+
+* Replacing recurrence and convolution with **attention**.
+* Allowing **efficient parallel training**.
+* Enabling large-scale models that power modern NLP and beyond.
+
+The core is **self-attention**, which lets each token "see" every other token and decide what matters most.
+
+
+
+
+
+

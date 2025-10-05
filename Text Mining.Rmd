@@ -1,0 +1,609 @@
+---
+title: "Text Mining"
+author: "Hope Hennessy"
+date: "2025-09-15"
+output:
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+# Text Mining with `stringr` and Regular Expressions
+
+Text mining is the process of extracting useful patterns, insights, and information from text data.
+This is essential because text is unstructured, inconsistent, and often noisy. Examples of text mining tasks include:
+
+* Cleaning survey responses (`Yes`, `yes!`, `Y` $\to$ standardized to `Yes`).
+* Extracting emails, hashtags, phone numbers, or IDs from a dataset.
+* Preparing text for Natural Language Processing (NLP) tasks like sentiment analysis or topic modeling.
+
+Text analysis generally involves two steps:
+
+1. Preprocessing & Cleaning:
+   Standardizing, trimming, splitting, and extracting relevant text.
+2. Pattern Matching & Feature Engineering:
+   Using regex and string functions to identify useful features for modeling.
+
+This notebook introduces:
+
+1. The basics of string manipulation with the `stringr` package.
+2. Regular expressions (regex) for pattern matching.
+3. Practical examples of cleaning and preparing real-world text data.
+
+
+# 1. Why Use `stringr`?
+
+R has many built-in string manipulation functions, but they can be inconsistent in syntax.
+The `stringr` package (part of the tidyverse) provides:
+
+* A consistent set of functions, all starting with `str_`.
+* Vectorized functions (they work on entire columns of data).
+* Functions designed to integrate smoothly with data frames, `dplyr`, and other tidyverse tools.
+
+```{r load_packages}
+library(tidyverse)
+```
+
+
+# 2. String Basics
+
+Strings are sequences of characters stored as text. They are enclosed in:
+
+* Single quotes: `'This is a string'`
+* Double quotes: `"This is also a string"`
+
+```{r string_basics}
+string <- "This is a string"
+string
+str(string)    # Displays structure of the object
+length(string) # Number of elements (here, 1)
+nchar(string)  # Base R: number of characters in the string
+str_length(string) # stringr equivalent
+```
+
+Important distinction:
+
+* `length()` counts the number of elements (like rows in a vector).
+* `str_length()` counts the number of characters in each string.
+
+```{r}
+string <- "He said, \"Hello!\""
+
+print(string)      # Shows quotes
+cat(string)        # No quotes, no newline
+writeLines(string) # No quotes, adds newline
+```
+
+
+## Escaping Characters
+
+Some characters have special meaning in strings or regex and must be escaped using a backslash `\`.
+
+Example:
+
+```{r escaping_quotes}
+string <- "He said, \"Hello!\""
+writeLines(string) 
+```
+
+To include a backslash itself, escape it twice:
+
+```{r escaping_backslash}
+writeLines("C:\\Users\\Documents")
+```
+
+
+
+### Special Meta-Characters
+
+These characters represent actions like tabs or newlines:
+
+| Character | Meaning         |
+| --------- | --------------- |
+| `\t`      | Tab             |
+| `\n`      | Newline         |
+| `\r`      | Carriage return |
+
+```{r special_characters}
+writeLines("Column1\tColumn2\nValue1\tValue2")
+```
+
+
+## Combining & Extracting Substrings
+
+Combine multiple strings: `str_c()`
+
+```{r combining_strings}
+str_c("Data", "Science", sep = " ")
+str_c("Hello", "World", sep = ", ")
+```
+
+Extract parts of strings by position: `str_sub()`
+
+```{r extracting_substrings}
+url <- "http://example.com/index.html"
+str_sub(url, 1, 4)   # First four characters
+str_sub(url, -5, -1) # Last five characters
+```
+
+Negative indices count from the end of the string.
+
+## Case Conversion
+
+```{r case_conversion}
+str_to_upper("data science")
+str_to_lower("DATA Science")
+```
+
+
+## Trimming Whitespace
+
+Extra whitespace is common in messy datasets:
+
+```{r trimming_whitespace}
+str_trim("   messy text   ")
+```
+
+Tip: Always trim text before comparing or grouping values, especially in survey data.
+
+
+## Vectorization
+
+Most `stringr` functions automatically process vectors element-wise:
+
+```{r vectorization}
+str_to_upper(c("data", "science", "rocks"))
+```
+
+This makes them ideal for working with data frame columns.
+
+
+
+# 3. Regular Expressions (Regex)
+
+Regular expressions are a mini-language for pattern matching within text.
+They allow you to:
+
+* Detect whether text fits a certain format.
+* Extract specific sequences like emails, IDs, or phone numbers.
+* Clean or standardize messy text efficiently.
+
+
+## Basic Matching
+
+```{r sample_data}
+x <- c("apple", "banana", "pear", "28.50", "Probability 0", "test123")
+```
+
+Match exact patterns:
+
+```{r basic_matching}
+str_view(x, "ap")
+```
+
+
+## Special Character Classes
+
+| Pattern | Matches                              |
+| ------- | ------------------------------------ |
+| `\\d`   | Any digit `[0-9]`                    |
+| `\\w`   | Any word character `[A-Z & a-z & 0-9 & _]`    |
+| `\\s`   | Any whitespace (space, tab, newline) |
+
+
+Negations (capitalized):
+
+| Pattern | Meaning            |
+| ------- | ------------------ |
+| `\\D`   | Non-digit          |
+| `\\W`   | Non-word character |
+| `\\S`   | Non-whitespace     |
+
+Why double backslashes?
+
+* The first `\` escapes for R.
+* The second `\` is read by the regex engine.
+
+Example:
+
+```{r character_classes}
+str_view(x, "\\d")
+str_view(x, "\\D")
+```
+```{r}
+z <- c("Hello", "World123", "user_id", "no-spaces!", "123")
+
+# Detect strings containing word characters
+str_detect(z, "\\w")
+```
+
+
+
+## Character Sets and Wildcards
+
+| Syntax   | Description                               | Example                |
+| -------- | ----------------------------------------- | ---------------------- |
+| `[abc]`  | Match a single character: a OR b OR c     | `str_view(x, "[ap]")`  |
+| `[^abc]` | Match anything EXCEPT a, b, or c          | `str_view(x, "[^b]a")` |
+| `.`      | Match any single character                | `str_view(x, "a.")`    |
+| `[A-Z]`  | Any uppercase letter                      | `str_view(x, "[A-Z]")` |
+| `[0-9]`  | Any digit                                 | `str_view(x, "[0-9]")` |
+
+
+```{r character_sets}
+str_view(x, "[ap]")
+str_view(x, "[ap][pe]")
+str_view(x, "[^b]a")
+str_view(x, "a.")
+str_view(x, "[A-Z]")
+```
+
+
+
+## Repetitions (Quantifiers)
+
+| Symbol  | Meaning           | Example                                      |
+| ------- | ----------------- | -------------------------------------------- |
+| `+`     | 1 or more         | `"a+"` matches `"a"`, `"aa"`                 |
+| `*`     | 0 or more         | `"ba*"` matches `"b"`, `"baaa"`              |
+| `?`     | 0 or 1 (optional) | `"colou?r"` matches `"color"` and `"colour"` |
+| `{n}`   | Exactly n         | `"\\d{3}"` matches `123`                     |
+| `{n,}`  | n or more         | `"\\d{2,}"` matches `12`, `12345`            |
+| `{n,m}` | Between n and m   | `"\\d{2,4}"` matches `12`, `123`, `1234`     |
+
+Example:
+
+```{r quantifiers}
+str_view(x, '\\w{2,3}') # any alphanum between 2 and 3 times
+str_view(x, '\\w{2,}') # any alphanum at least 2 
+str_view(x, '[an]{4}') # four consecutive characters, each of which can be an a or n
+
+str_view(x, 'a[na]+')
+str_view(x, 'a[na]*')
+str_view('apple', 'ap?p')
+str_view('apple', 'an?p')
+
+```
+
+
+## Anchors
+
+| Anchor | Description     |
+| ------ | --------------- |
+| `^`    | Start of string |
+| `$`    | End of string   |
+
+Examples:
+
+```{r anchors}
+str_view(x, '^a')
+str_view(x, 'a$')
+str_view(x, '^a.*e$')
+str_view(x, "\\d$") # ends with a digit
+```
+
+
+## Grouping
+
+Parentheses create logical groupings and precedence:
+
+```{r grouping}
+str_view(c("I love cats", "I love dogs"), "I love (cats|dogs)")
+
+str_view('I love cats', 'I love (cats|dogs)')
+str_view('I love birds', 'I love (cats|dogs)')
+str_view('I love dogs', 'I love cats|dogs')
+```
+
+
+
+# 4. Common `stringr` Functions
+
+
+## Pattern Detection
+
+The `str_detect()` function can be used to determine whether an input string contains a specified pattern. Where the input is a vector, `str_detect()` checks whether each element in turn contains the pattern i.e. it returns a logical vector of the same length as the input.
+
+Determine whether a string matches a pattern:
+
+```{r pattern_detection}
+str_detect(x, "\\d")
+```
+
+Filter matching values:
+
+```{r filtering_matches}
+# Base R
+x[str_detect(x, "\\d")] # elements of x containing a digit
+x[!str_detect(x, '\\d')] # elements of x not containing a digit
+
+str_subset(x, "\\d")    # tidyverse shortcut
+str_which(x, '\\d')     # extracts indices of elements matching a pattern
+```
+
+
+## Counting Matches
+
+Count how many times a pattern appears:
+
+```{r counting_matches}
+str_count(x, "\\d")
+```
+
+Example: count spaces in sentences:
+
+```{r counting_spaces}
+sentences <- c("Hello world", "R is fun")
+str_count(sentences, " ")
+```
+
+
+## Extracting Matches
+
+First match: `str_extract()`
+All matches: `str_extract_all()`
+
+```{r extracting_matches}
+str_extract(x, "\\d+")
+str_extract_all(x, "\\d+")
+
+str_extract(x, 'a[nb]')
+str_extract_all(x, 'a[nb]')
+```
+
+
+
+## Replacing Text
+
+Replace matched patterns with new text:
+
+```{r replacing_text}
+str_replace(x, "[aeiou]", "-")
+str_replace_all(x, "[aeiou]", "-")
+```
+
+Use case: Clean punctuation or standardize inconsistent text.
+
+
+## Splitting Strings
+
+Divide text into parts based on a delimiter:
+
+```{r splitting_strings}
+str_split("Data Science with R", " ")
+str_split("2025-09-15", "-")
+```
+
+Example: splitting CSV-like data:
+
+```{r splitting_csv}
+str_split("A,B,C,D", ",")
+```
+
+
+
+# 5. Real-World Use Cases
+
+## Cleaning Survey Data
+
+Messy responses often contain extra spaces or symbols:
+
+```{r cleaning_survey_data}
+responses <- c("Yes ", " yes", "YES!", "no", "No ", "N/A")
+
+clean_responses <- responses %>%
+  str_to_lower() %>%
+  str_trim() %>%
+  str_replace_all("[^a-z]", "") # remove non-letters
+
+clean_responses
+```
+
+## Extracting Email Addresses
+
+```{r extracting_emails}
+emails <- c("Contact: test@domain.com", "support@company.org", "no-email")
+str_extract(emails, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
+```
+
+## Detecting Hashtags
+
+```{r detecting_hashtags}
+tweets <- c("Loving #datascience", "#rstats is amazing", "no tags here")
+str_subset(tweets, "#\\w+")
+```
+
+## Tokenizing Text
+
+Splitting sentences into individual words:
+
+```{r tokenizing_text}
+text <- "Text mining is fun!"
+tokens <- str_split(text, "\\s+")[[1]]
+tokens
+```
+
+## Validating IDs or Codes
+
+Ensure entries follow a strict pattern:
+
+```{r validating_ids}
+ids <- c("AB123", "A1", "XYZ789")
+str_detect(ids, "^[A-Z]{2,3}\\d{3}$")
+```
+
+
+## Advanced Data Cleaning Example
+
+```{r advanced_cleaning}
+# Messy customer data
+messy_customer_data <- c(
+  "John Doe (555) 123-4567 john@email.com",
+  "JANE SMITH 555.987.6543 jane@company.org",
+  "Bob Johnson  (555)456-7890  bob123@test.net")
+
+# Extract names (everything before the first parenthesis or digit)
+names <- str_extract(messy_customer_data, "^[A-Za-z\\s]+")
+names <- str_trim(names) %>% str_to_title()
+
+# Extract phone numbers
+phones <- str_extract(messy_customer_data, "\\(?\\d{3}\\)?[.-]?\\s?\\d{3}[.-]?\\d{4}")
+
+# Extract emails
+emails <- str_extract(messy_customer_data, "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}")
+
+# Create clean data frame
+clean_customer_data <- data.frame(
+  name = names,
+  phone = phones,
+  email = emails)
+
+print(clean_customer_data)
+```
+
+
+
+## Log File Processing
+
+```{r log_processing}
+# Sample log entries
+log_entries <- c(
+  "2025-09-15 10:30:15 ERROR Database connection failed",
+  "2025-09-15 10:31:22 INFO User logged in successfully",
+  "2025-09-15 10:32:08 WARNING Low disk space detected")
+
+# Extract components using regex
+dates <- str_extract(log_entries, "\\d{4}-\\d{2}-\\d{2}")
+times <- str_extract(log_entries, "\\d{2}:\\d{2}:\\d{2}")
+levels <- str_extract(log_entries, "(ERROR|INFO|WARNING)")
+messages <- str_extract(log_entries, "(?<=ERROR |INFO |WARNING ).*")
+
+# Create structured log data
+log_data <- data.frame(
+  date = dates,
+  time = times,
+  level = levels,
+  message = messages)
+
+print(log_data)
+```
+
+
+## Text Validation Functions
+
+```{r validation_functions}
+# Create validation functions for common data types
+
+# Email validation
+validate_email <- function(email) {
+  pattern <- "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$"
+  str_detect(email, pattern)
+}
+
+# Phone validation (US format)
+validate_phone <- function(phone) {
+  pattern <- "\\(?\\d{3}\\)?[.-]?\\s?\\d{3}[.-]?\\d{4}"
+  str_detect(phone, pattern)
+}
+
+# Date validation (YYYY-MM-DD format)
+validate_date <- function(date) {
+  pattern <- "^\\d{4}-\\d{2}-\\d{2}$"
+  str_detect(date, pattern)
+}
+
+# Test the validation functions
+test_data <- c(
+  "john@email.com",
+  "invalid-email",
+  "(555) 123-4567",
+  "555-invalid",
+  "2025-09-15",
+  "invalid-date"
+)
+
+tibble(
+  text = test_data,
+  is_email = validate_email(test_data),
+  is_phone = validate_phone(test_data),
+  is_date = validate_date(test_data))
+```
+
+
+
+
+
+
+# 7. Summary Table
+
+| Task           | Function                             | Example                    |
+| -------------- | ------------------------------------ | -------------------------- |
+| Detect pattern | `str_detect()`                       | `str_detect(x, "\\d")`     |
+| Filter matches | `str_subset()`                       | `str_subset(x, "\\d")`     |
+| Count matches  | `str_count()`                        | `str_count(x, "\\d")`      |
+| Extract text   | `str_extract()`, `str_extract_all()` | `str_extract(x, "\\d+")`   |
+| Replace text   | `str_replace()`, `str_replace_all()` | `str_replace(x, "a", "-")` |
+| Split text     | `str_split()`                        | `str_split("a,b,c", ",")`  |
+| Trim whitespace| `str_trim()`, `str_squish()`         | `str_trim("  text  ")`     |
+| Change case    | `str_to_upper()`, `str_to_lower()`   | `str_to_upper("text")`     |
+
+
+# 8. Common Regex Patterns Quick Reference
+
+```{r regex_patterns}
+# Common patterns for validation and extraction
+patterns <- tribble(
+  ~Description, ~Pattern, ~Example,
+  "Email", "[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "user@domain.com",
+  "Phone (US)", "\\(?\\d{3}\\)?[.-]?\\s?\\d{3}[.-]?\\d{4}", "(555) 123-4567",
+  "Date (YYYY-MM-DD)", "\\d{4}-\\d{2}-\\d{2}", "2025-09-15",
+  "URL", "https?://[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "https://example.com",
+  "Hashtag", "#\\w+", "#datascience",
+  "Mention", "@\\w+", "@username",
+  "Currency", "\\$\\d+\\.?\\d*", "$19.99",
+  "ZIP Code", "\\d{5}(-\\d{4})?", "12345-6789")
+
+print(patterns)
+```
+
+
+
+# 9. Exercises
+
+1. Clean a column of messy text (extra spaces, inconsistent capitalization, and punctuation).
+2. Write a regex to extract:
+   * Phone numbers like `(123) 456-7890`.
+   * Twitter handles like `@username`.
+3. Detect and extract dates in the format `YYYY-MM-DD`.
+4. Count how many hashtags appear in each tweet.
+5. Use `str_detect()` to filter rows that contain two consecutive digits.
+6. Create a function that standardizes phone numbers to the format `(XXX) XXX-XXXX`.
+7. Parse a log file and extract IP addresses, timestamps, and error codes.
+
+```{r exercise_solutions}
+# Exercise 6 solution: Phone number standardization
+standardize_phone <- function(phone) {
+  # Remove all non-digits
+  digits_only <- str_replace_all(phone, "[^\\d]", "")
+  
+  # Check if we have exactly 10 digits
+  if (str_length(digits_only) == 10) {
+    # Format as (XXX) XXX-XXXX
+    formatted <- str_replace(digits_only, "(\\d{3})(\\d{3})(\\d{4})", "(\\1) \\2-\\3")
+    return(formatted)
+  } else {
+    return(phone)  # Return original if not valid
+  }
+}
+
+# Test the function
+test_phones <- c("5551234567", "(555) 123-4567", "555.123.4567", "invalid")
+standardized <- map_chr(test_phones, standardize_phone)
+
+tibble(original = test_phones, standardized = standardized)
+```
+

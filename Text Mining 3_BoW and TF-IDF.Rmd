@@ -1,0 +1,529 @@
+---
+title: "Text Mining 3"
+author: "Hope Hennessy"
+date: "2025-09-22"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F)
+```
+
+# Bag-of-words & tf-idf models
+
+
+# Bag-of-Words (BoW) Model
+
+The Bag-of-Words (BoW) model is a simple way to represent text data for analysis.
+
+* A document is represented as a set of words, ignoring grammar, word order, and sentence structure.
+* The focus is on word frequency counts, which can be used as features for tasks such as clustering or predictive modeling.
+
+### Example Scenario
+
+Suppose we have a collection of newspaper articles from two categories: entertainment and business.
+
+* The collection of documents is called the corpus.
+* The set of all unique words across these documents is the vocabulary or the "bag of words."
+
+We can represent the data as a document-term matrix:
+
+* Rows = individual documents
+* Columns = unique words (features)
+* Cell values = frequency of a specific word in a specific document
+* Response variable = article category (e.g. entertainment or business)
+
+This matrix is usually sparse because most words don’t appear in every document.
+
+|document | sing | money | the | happy | dividend | ... | response |
+|---------|------|-------|-----|-------|----------|-----|----------|
+|1        | 5    | 0     | 15  | 0     | 0        | ... | ent      |
+|2        | 0    | 5     | 12  | 2     | 0        | ... | bus      |
+|3        | 0    | 0     | 3   | 0     | 6        | ... | bus      |
+| ...     | ...  | ...   | ... | ...   | ...      | ... | ...      |
+|100      | 10   | 0     | 13  | 10    | 2        | ... | ent      |
+
+
+
+Using this representation, we can train a model to predict whether an article is about business or entertainment, based on word usage patterns.
+
+## Notebook Overview
+
+This notebook demonstrates how to use BoW models step-by-step:
+
+1. Feature Extraction: convert text documents into BoW features.
+2. Model Building: build a classification tree to predict whether a Trump tweet was posted before or after he became president, based solely on tweet content.
+3. Model Evaluation: test the model using in-sample and out-of-sample validation.
+4. Introducing TF-IDF: 
+    * Term Frequency-Inverse Document Frequency (TF-IDF) weights words by how important they are to a specific document relative to all documents.
+    * This reduces the impact of common words like the or and.
+3. Improved Model:
+    * Build a second classification tree using TF-IDF features to see if prediction accuracy improves.
+
+[Chapter 3](http://tidytextmining.com/tfidf.html) of TMR covers tf-idf and related topics.
+
+
+
+## Data Preparation
+
+Before modeling, we:
+
+* Parse tweet dates to identify the timeline.
+* Create a variable indicating whether a tweet was made while Trump was president.
+* Clean tweets by removing links and retweets.
+    * Note: Stop words are not removed here because TF-IDF will naturally downweight them. You can uncomment the relevant code line to test removing them manually.
+* Tokenize tweets into tidy text data, handling special elements like hashtags.
+
+Finally, we sample 1000 tweets from each period (before and after presidency) to build and test our model. More data can be used for improved performance.
+
+
+```{r}
+library(tidyverse)
+library(tidytext)
+library(rpart) 
+
+load('trump-tweets.RData')    
+tweets <- as_tibble(tweets)
+
+# Parse the date and add some date related variables
+tweets <- tweets %>% 
+  mutate(date = parse_datetime(str_sub(tweets$created_at, 5, 30), "%b %d %H:%M:%S %z %Y")) %>% 
+  mutate(is_potus = (date > ymd(20161108))) %>%  # logical column - TRUE for tweet posted after Trump became president: 2016-11-08
+  mutate(month = make_date(year(date), month(date))) # variable of only year & month of tweet
+
+# Take a random sample of 1000 tweets before and after he became president
+set.seed(123)
+tweets_sample <- tweets %>% group_by(is_potus) %>% slice_sample(n = 1000) %>% ungroup()
+
+# Turn into tidy text 
+replace_reg <- '(http.*?(\\s|.$))|(www.*?(\\s|.$))|&amp;|&lt;|&gt;'  
+unnest_reg <- "[^\\w_#@'’]"
+tidy_tweets <- tweets_sample %>% 
+  filter(is_retweet == FALSE) %>%                                        # remove retweets
+  mutate(text = str_replace_all(text, replace_reg, '')) %>%              # replaces links & unwanted symbols with empty string 
+  unnest_tokens(word, text, token = 'regex', pattern = unnest_reg) %>%   # breaks each tweet into individual tokens using regex pattern
+  # filter(!word %in% stop_words$word, str_detect(word, '[A-Za-z]')) %>% # Keeps stop words for later TF-IDF downweighting
+  filter(!str_detect(word, '@real[Dd]onald[Tt]rump')) %>%                # remove @realDonaldTrump, which we know is highly predictive
+  select(date, word, is_potus, favorite_count, id_str, month)            # select only relevant columns
+
+```
+
+The result is a tidy dataset where each row represents one word from one tweet, ready for text analysis.
+
+* replace_reg pattern matches unwanted text like links or HTML codes. It has five main parts, separated by | (OR):
+    1. http.*?(\\s|.$)
+        * Matches links starting with http.
+        .*? $\to$ lazily matches any characters until a space (\\s) or the end of the string (.$).
+    2. www.*?(\\s|.$) $\to$ matches links starting with www. Same logic as above with space or end-of-line as the stopping point.
+    3. &amp; $\to$ matches the HTML entity for "&" (&amp;).
+    4. &lt; $\to$ matches the HTML entity for "<" (&lt;).
+    5. &gt; $\to$ matches the HTML entity for ">" (&gt;).
+
+* unnest_reg defines token separators, meaning it splits the text wherever these characters are NOT found. It keeps words, hashtags, mentions, and apostrophes together as tokens. Everything else (spaces, punctuation, etc.) is treated as a separator.
+    * [^...] $\to$ negates the set, so it matches any character NOT listed inside.
+    * Inside the brackets:
+        * \\w $\to$ matches letters, digits, and underscores.
+        * _ $\to$ explicitly includes underscore (though already covered by \\w).
+        * # $\to$ includes hashtags.
+        * @ $\to$ includes mentions/usernames.
+        * '’ $\to$ includes both straight and curly apostrophes.
+
+
+Let's look at the most popular words:
+
+```{r}
+tidy_tweets %>% 
+  count(word) %>% 
+  arrange(desc(n)) %>% 
+  filter(rank(desc(n)) <= 10)
+```
+
+
+## Extracting bag-of-words data from text
+
+We now put our data into "bag-of-words" form.
+
+1. Identify all unique words appearing in a sample of 2,000 tweets.
+2. Count how often each word occurs in each tweet.
+3. Create a structured dataset where each tweet is a row and each word is a column.
+
+
+### Step 1: Identify the Most Frequent Words
+
+Since tweets contain thousands of unique words, working with the full set is computationally expensive. To simplify the problem, we focus on only the top 200 most frequently used words.
+
+```{r}
+word_bag <- tidy_tweets %>% 
+  count(word) %>% 
+  top_n(200, wt = n) %>% 
+  select(-n) # only keep column of words
+
+nrow(word_bag) # check how many words were included
+```
+
+* top_n(200, wt = n): Selects the 200 most frequent words based on the count n. If multiple words are tied at rank 200, they are all included, so the final number of words may be slightly more than 200.
+
+It doesn’t matter if we end up with slightly more than 200 words since the goal is simply to reduce the dataset size for easier analysis in this notebook.
+
+### Step 2: Count Word Frequencies per Tweet
+
+Next, we count how many times each of these top words occurs within each tweet.
+
+If a tweet does not contain any of the top words, it is dropped from the dataset at this stage.
+
+
+```{r}
+tweets_tdf <- tidy_tweets %>% 
+  inner_join(word_bag) %>%  # drops words not among the top words
+  group_by(id_str,word) %>%  # how often each word appears in each tweet
+  count() %>%  
+  group_by(id_str) %>% 
+  mutate(total = sum(n)) %>% # total number of these words in the tweet
+  ungroup()
+```
+
+
+### Step 3: Reshape to Wide Format for Modeling
+
+Many modeling functions, like those in rpart (for decision trees), require data in a wide format: Rows = tweets & Columns = individual words (features)
+
+Note that we're moving here from a tidy to untidy format, because that is the format required by **rpart**, the classification tree package we're going to use to do further modelling.
+
+We use pivot_wider() to reshape the data:
+
+```{r}
+bag_of_words <- tweets_tdf %>% 
+  select(id_str, word, n) %>% 
+  pivot_wider(
+    names_from = word,     # each unique word becomes a column
+    values_from = n,       # cell value = count of that word
+    values_fill = 0) %>%   # fill missing values with 0
+  left_join(tweets %>% select(id_str, is_potus)) %>%  # add response var
+  select(id_str, is_potus, everything())
+
+# number of tweets
+nrow(bag_of_words)
+# number of variables (words, plus id and response)
+ncol(bag_of_words)
+```
+
+### Step 4: Check Class Balance
+
+After dropping tweets without top words, it’s important to check whether one response class (is_potus) has been disproportionately reduced.
+
+```{r}
+table(bag_of_words$is_potus)
+```
+
+Here we see that whilst only 25 non-presidential tweets were lost by only taking the 203 most frequent words, 141 presidential tweets were removed $\to$ class imbalance
+
+
+### Step 5: Balance the Classes
+
+Balanced classes are important because:
+
+1. Many machine learning algorithms perform better with roughly equal group sizes.
+2. It provides a clear benchmark accuracy: With perfectly balanced data, a random classifier would score 50% accuracy.
+
+We fix the imbalance by randomly sampling tweets from the larger class to match the size of the smaller class:
+
+```{r}
+min_class_size <- min(table(bag_of_words$is_potus)) # 859
+
+bag_of_words <- bag_of_words %>% 
+  group_by(is_potus) %>% 
+  sample_n(min_class_size) %>% 
+  ungroup()
+
+table(bag_of_words$is_potus)
+
+```
+Now both groups have the same number of tweets, ensuring fair training and evaluation.
+
+
+## Building a bag-of-words classifier 
+
+Now that we’ve transformed our tweet dataset into a bag-of-words (BoW) format, we can build a predictive model to classify tweets.
+Our goal is to determine whether a given tweet was posted before or after Donald Trump became president, based on the frequencies of words used in the tweet.
+
+* Response variable: is_potus $\to$ a binary variable (TRUE = posted while president, FALSE = posted before presidency).
+* Predictor variables: Integer counts of words from the BoW representation.
+* Model choice: classification tree, built using the CART algorithm, implemented in the rpart package. CART trees are intuitive, non-parametric models that split data into homogeneous groups based on predictor variables.
+
+
+### Step 1: Splitting Data into Training and Test Sets
+
+To properly evaluate our model’s performance, we split the dataset into training (70%) and test sets (30%) ensuring both classes are equally represented in the training and test sets (prevents imbalance that could bias the model). 
+
+```{r}
+library(caret)
+
+set.seed(321)
+
+train_index <- createDataPartition(bag_of_words$is_potus, p = 0.7, list = FALSE)
+training_tweets <- bag_of_words[train_index, ] %>% select(-id_str)
+test_tweets <- bag_of_words[-train_index, ] %>% select(-id_str)
+```
+
+
+### Step 2: Fitting the Classification Tree
+
+```{r}
+fit <- rpart(is_potus ~ ., training_tweets, method = 'class')
+```
+
+
+### Step 3: Visualizing the Tree
+
+```{r, fig.width = 12, fig.height = 10}
+plot(fit, main = 'Full Classification Tree')
+text(fit, use.n = TRUE, all = TRUE, cex = .8)
+```
+
+Words that appear near the top of the tree are the most predictive of whether a tweet was before or during Trump’s presidency.
+
+### Step 4: Evaluating Model Accuracy
+
+We evaluate the model by comparing predicted classes vs actual classes. Because we balanced the dataset, random guessing would give an expected accuracy of 50%, so anything above this is meaningful.
+
+Training Accuracy:
+
+```{r}
+fittedtrain <- predict(fit, type = 'class')
+predtrain <- table(training_tweets$is_potus, fittedtrain)
+predtrain
+round(sum(diag(predtrain)) / sum(predtrain), 3) # training accuracy
+```
+
+Test Accuracy:
+
+```{r}
+fittedtest <- predict(fit, newdata = test_tweets, type = 'class')
+predtest <- table(test_tweets$is_potus, fittedtest)
+predtest
+round(sum(diag(predtest)) / sum(predtest), 3) # test accuracy
+```
+
+Test accuracy reflects true model performance on unseen data. A large drop from training accuracy indicates overfitting, however that is not seen in thise case.
+
+# Term frequency-inverse-document-frequency (tf-idf)
+
+In the previous section, we represented tweets using word frequencies to predict whether a tweet was posted by Donald Trump before or during his presidency.
+This approach, known as the bag-of-words model, is a standard method in text mining where each document is described by the counts of the words it contains.
+
+However, not all words are equally useful for distinguishing one document from another.
+
+For example:
+
+* If a tweet frequently contains the word “apple”, it might indicate a topic like health or recipes rather than politics.
+* Words like “the”, “a”, and “and” appear very frequently in almost all documents, so they are not very informative.
+
+Traditionally, we handled these common, uninformative words (called stop words) by removing them entirely.
+
+An alternative approach is to downweight their importance rather than deleting them $\to$ TF-IDF 
+
+
+TF-IDF stands for Term Frequency-Inverse Document Frequency.
+It assigns a weight or score to each word (or "term") in a document, based on two factors:
+
+1. Term Frequency (TF) – Measures how often a word appears within a single document.
+    * For tf-idf we use *relative* frequencies: the number of times a word appears, divided by the total number of words in that document.
+2. Inverse Document Frequency (IDF) – Measures how unique or rare a word is across the entire corpus.
+    * A term’s inverse document frequency is a measure of how many documents (in the corpus) contain that term. 
+    * It decreases the weight for commonly used words (which all or most documents will use) relative to words that are not used by many documents in a corpus.
+
+By combining these two measures, TF-IDF highlights words that:
+
+* Are frequent in a specific document (high TF),
+* But not too common across many documents (high IDF).
+
+Specifically, we are going to replace the term frequencies we were using before with new values called "inverse document frequency weighted term frequencies" or tf-idf for short. So each term in each document will get its own tf-idf "score", which we denote $tfidf(\text{term t in document i})$.
+
+The general formula for TF-IDF is:
+
+$$tfidf(\text{term t in document i}) = tf(\text{term t in document i}) \times idf(\text{term t})$$
+
+where
+
+Term Frequency (TF):
+
+$$tf(\text{term t in document i}) = \displaystyle\frac{\text{Number of times term t appears in document i}}{\text{Number of terms in document i}}$$  
+
+Inverse Document Frequency (IDF):
+
+$$idf(\text{term t}) = \ln\biggl(\displaystyle\frac{\text{Number of documents in corpus}}{\text{Number of documents containing term t}}\biggr)$$ 
+
+
+### How IDF Works
+
+* If a word appears in many documents, its denominator is large, making IDF small $\to$ lower importance.
+* If a word appears in few documents, its denominator is small, making IDF large $\to$ higher importance.
+
+* Words like "the" or "and" appear in almost every document, so their IDF score is near zero.
+* Rare words like "hurricane" or "impeachment" have high IDF scores, marking them as important.
+
+The log transform in IDF ensures that the decrease is steep initially, but levels off as the word becomes more common.
+
+
+
+### Visualization of IDF
+
+The plot below shows how IDF changes as the number of documents containing a term increases:
+
+```{r, fig.width = 5, fig.height = 5}
+# options(repr.plot.width = 8, repr.plot.height = 8) # set plot size in the notebook
+plot(1:100, log(100/1:100), type = 'l', 
+     xlab = 'Number of documents (out of 100) containing term t', ylab = 'idf(t)')
+```
+
+
+* Left side (low x): Rare terms $\to$ high IDF.
+* Right side (high x): Common terms $\to$ low IDF.
+
+
+| **Word Count** | **TF-IDF** |
+|---|---|
+| Treats all words equally. | Downweights common words, highlights unique ones. |
+| Stop words must be manually removed. | Automatically reduces their importance. |
+| May overweight frequent but unimportant words like *"the"*. | Balances term frequency with term uniqueness. |
+| Good for very simple models. | Better for predictive modeling and clustering. |
+
+
+## Implementing TF-IDF in R
+
+### Step 1: Calculate TF-IDF manually
+
+```{r}
+# Count number of documents (tweets)
+ndocs <- length(unique(tweets_tdf$id_str))  # 1834
+
+# Calculate IDF
+idf <- tweets_tdf %>% 
+  group_by(word) %>% 
+  summarize(docs_with_word = n()) %>%  # counts no. tweets each word appears in
+  ungroup() %>% 
+  mutate(idf = log(ndocs / docs_with_word)) %>% 
+  arrange(desc(idf)) # most unique words (highest IDF) appear at the top
+
+# Calculate TF and TF-IDF
+tweets_tdf <- tweets_tdf %>% 
+  left_join(idf, by = 'word') %>% 
+  mutate(tf = n/total,       # term frequency
+         tf_idf = tf * idf)  # final TF-IDF score
+
+head(tweets_tdf)
+```
+
+### Step 2: Explore Results
+
+Let's explore how the weighting affects the terms that come up as "most important", by looking at one particular tweet.
+
+```{r}
+set.seed(321)
+random_tweet <- sample(tweets_tdf$id_str, 1)
+tweets %>% filter(id_str == random_tweet) %>% select(text)
+```
+
+Below we rank words in descending order of importance by the criterion of word frequency (`n`). By changing this to inverse document frequency (`idf`) and tf-idf (`tf_idf`) you can see which words become more or less important, and get a sense for why.
+
+
+```{r}
+tweets_tdf %>% filter(id_str == random_tweet) %>% arrange(desc(n))
+```
+
+
+### Step 3: Simplify Using bind_tf_idf()
+
+We've done the tf-idf calculation "from scratch" to get a better understanding of what is happening. The **tidytext** package has a function `bind_tf_idf()` that does the same thing.
+
+
+```{r}
+tweets_tdf <- tweets_tdf %>% 
+  select(-idf, -tf, -tf_idf) %>%  # remove the old ones we worked out
+  bind_tf_idf(word, id_str, n)    # replace with values from tidytext
+
+# check same as above
+tweets_tdf %>% 
+  filter(id_str == random_tweet) %>% 
+  arrange(desc(n))
+```
+
+# Building a Classifier with TF-IDF Features
+
+TF-IDF often improves predictive performance compared to simple word frequencies.
+
+### Step 1: Reshape Data
+
+We pivot the data to have one row per tweet and one column per word:
+
+```{r}
+tfidf <- tweets_tdf %>% 
+  select(id_str, word, tf_idf) %>%  # note the change, using tf-idf
+  pivot_wider(names_from = word, values_from = tf_idf, values_fill = 0) %>%
+  left_join(tweets %>% select(id_str,is_potus))
+
+```
+
+### Step 2: Split Data into Training and Test Sets
+
+```{r}
+set.seed(321)
+
+train_index <- createDataPartition(tfidf$is_potus, p = 0.7, list = FALSE)
+training_tweets <- tfidf[train_index, ] %>% select(-id_str)
+test_tweets <- tfidf[-train_index, ] %>% select(-id_str)
+```
+
+### Step 3: Train the Model
+
+```{r}
+fit <- rpart(factor(is_potus) ~ ., training_tweets)
+```
+
+
+### Step 4: Visualize the Tree
+
+```{r, fig.width = 12, fig.height = 10}
+plot(fit, main='Full Classification Tree')
+text(fit, use.n=TRUE, all=TRUE, cex=.8)
+```
+
+
+### Step 5: Evaluate Performance
+
+Training Accuracy:
+
+```{r}
+fittedtrain <- predict(fit, type = 'class')
+predtrain <- table(training_tweets$is_potus, fittedtrain)
+predtrain
+round(sum(diag(predtrain))/sum(predtrain), 3) # training accuracy
+```
+
+Test Accuracy: 
+
+```{r}
+fittedtest <- predict(fit,newdata = test_tweets, type = 'class')
+predtest <- table(test_tweets$is_potus, fittedtest)
+predtest
+round(sum(diag(predtest))/sum(predtest), 3) # test accuracy
+```
+
+TF-IDF features usually yield slightly higher accuracy compared to using raw word frequencies.
+
+# Practical Applications
+
+* Spam detection (e.g. identifying unusual words in spam emails).
+* Topic modeling and document clustering.
+* Sentiment analysis.
+* Search engines and recommendation systems.
+
+
+
+## Exercises
+
+Try and improve on the classification models described above. Try the following (for example):
++ use bigrams rather than words as tokens.
++ include other explanatory variables included in the `tweets` data frame.
++ remove stopwords
+
