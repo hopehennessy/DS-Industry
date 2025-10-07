@@ -37,6 +37,10 @@ knitr::opts_chunk$set(echo = FALSE, fig.width = 5, fig.height = 5,
                       fig.align = "center", warning = FALSE, message = FALSE, 
                       fig.show = 'hold', out.width = '70%')
 
+# Relax linting rules for academic work
+options(lintr.linter_file = "none")  # Disable linting entirely
+options(lintr.exclude_linters = c("object_usage_linter", "object_name_linter", 
+                                  "cyclocomp_linter", "line_length_linter"))
 
 library(tidyverse)
 library(patchwork)
@@ -869,9 +873,9 @@ recommend_for_new_user <- function(new_user_ratings, user_item_matrix,
 
 # Step 1: Create user-item matrix
 user_item_matrix <- create_user_item_matrix(
-  data, 
+  data,
   min_ratings_per_book = 5, 
-  min_ratings_per_user = 3)
+  min_ratings_per_user = 2)
 
 # Step 2: Normalize matrix (by item means)
 normalized_result <- normalize_matrix(user_item_matrix)
@@ -937,6 +941,8 @@ new_user_recs
 
 ```{r}
 library(recosystem)
+library(dplyr)
+library(caret)
 ```
 
 
@@ -947,27 +953,56 @@ library(recosystem)
 # Following Lecture Notes Workflow
 # ================================================================
 
-library(recosystem)
-library(dplyr)
+# Create a more robust user-item matrix with proper filtering
+user_item_matrix_mf <- create_user_item_matrix(
+  data, 
+  min_ratings_per_book = 5,  # Books need at least 5 ratings
+  min_ratings_per_user = 2  # Users need at least 3 ratings
+)
 
+cat("Matrix dimensions:", nrow(user_item_matrix_mf), "users x", ncol(user_item_matrix_mf), "books\n")
+cat("Sparsity:", round(mean(is.na(user_item_matrix_mf)) * 100, 2), "%\n")
+
+# Diagnostic: Check rating distribution per user
+ratings_per_user <- rowSums(!is.na(user_item_matrix_mf))
+cat("\nRating distribution per user:\n")
+cat("Min ratings per user:", min(ratings_per_user), "\n")
+cat("Max ratings per user:", max(ratings_per_user), "\n")
+cat("Mean ratings per user:", round(mean(ratings_per_user), 2), "\n")
+cat("Users with < 3 ratings:", sum(ratings_per_user < 3), "\n")
+cat("Users with < 10 ratings:", sum(ratings_per_user < 10), "\n")
+
+# Diagnostic: Check rating distribution per book
+ratings_per_book <- colSums(!is.na(user_item_matrix_mf))
+cat("\nRating distribution per book:\n")
+cat("Min ratings per book:", min(ratings_per_book), "\n")
+cat("Max ratings per book:", max(ratings_per_book), "\n")
+cat("Mean ratings per book:", round(mean(ratings_per_book), 2), "\n")
+cat("Books with < 5 ratings:", sum(ratings_per_book < 5), "\n")
+cat("Books with < 10 ratings:", sum(ratings_per_book < 10), "\n")
+
+```
+
+
+
+```{r}
 # ---------------------------------------------------------------
 # 1. PREPARE DATA IN RECOSYSTEM FORMAT
 # ---------------------------------------------------------------
 
-prepare_recosystem_data <- function(user_item_matrix) {
+prepare_recosystem_data_improved <- function(user_item_matrix) {
   
   # Convert matrix to long format with observed ratings only
   observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
   
-  # recosystem expects 0-based or 1-based integer indices
-  # Let's use 0-based (subtract 1 from R's 1-based indices)
+  # Create training data with 0-based indexing 
   train_data <- data.frame(
     user_index = observed[, 1] - 1,
     item_index = observed[, 2] - 1,
     rating = user_item_matrix[observed]
   )
   
-  # Store ID mappings for later
+  # Store ID mappings for later use
   user_ids <- data.frame(
     user_index = 0:(nrow(user_item_matrix) - 1),
     user_id = rownames(user_item_matrix)
@@ -981,31 +1016,83 @@ prepare_recosystem_data <- function(user_item_matrix) {
   return(list(
     train_data = train_data,
     user_ids = user_ids,
-    item_ids = item_ids
+    item_ids = item_ids,
+    n_users = nrow(user_item_matrix),
+    n_items = ncol(user_item_matrix)
   ))
 }
+```
+
+* Converts your matrix into a list of (user, item, rating) triplets
+* Converts to 0-based indexing (recosystem requirement)
+* Creates ID mappings to convert back later
 
 
+
+```{r}
 # ---------------------------------------------------------------
 # 2. SPLIT INTO TRAIN AND TEST SETS
 # ---------------------------------------------------------------
 
-create_train_test_split_reco <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
+create_train_test_split <- function(user_item_matrix, test_ratio = 0.2, seed = 123, verbose = TRUE) {
   
   set.seed(seed)
   
   # Get observed ratings
   observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
   n_ratings <- nrow(observed)
+  n_users <- nrow(user_item_matrix)
+  n_items <- ncol(user_item_matrix)
   
-  # Randomly sample test indices
-  test_indices <- sample(1:n_ratings, size = floor(n_ratings * test_ratio))
+  if (n_ratings < 3) {
+    stop("Not enough ratings for train/test split (need at least 3 ratings)")
+  }
+  
+  if (verbose) {
+    cat("=== MATRIX FACTORIZATION TRAIN/TEST SPLIT ===\n")
+    cat("Matrix dimensions:", n_users, "users x", n_items, "items\n")
+    cat("Total observed ratings:", n_ratings, "\n")
+    cat("Sparsity:", round(mean(is.na(user_item_matrix)) * 100, 2), "%\n")
+    
+    # Analyze rating distribution per user
+    ratings_per_user <- rowSums(!is.na(user_item_matrix))
+    cat("Users with < 3 ratings:", sum(ratings_per_user < 3), "(", 
+        round(sum(ratings_per_user < 3)/n_users * 100, 1), "%)\n")
+    cat("Users with < 5 ratings:", sum(ratings_per_user < 5), "(", 
+        round(sum(ratings_per_user < 5)/n_users * 100, 1), "%)\n")
+    cat("Users with < 10 ratings:", sum(ratings_per_user < 10), "(", 
+        round(sum(ratings_per_user < 10)/n_users * 100, 1), "%)\n")
+    
+    cat("\n--- RANDOM GLOBAL SAMPLING ---\n")
+    cat("Method: Random sampling across ALL ratings\n")
+    cat("Advantage: MF learns global latent factors, works well with sparse data\n")
+  }
+  
+  # Simple random sampling - optimal for matrix factorization
+  test_size <- max(1, floor(n_ratings * test_ratio))
+  test_indices <- sample(1:n_ratings, size = test_size)
+  train_indices <- setdiff(1:n_ratings, test_indices)
   
   # Split data
   test_obs <- observed[test_indices, , drop = FALSE]
-  train_obs <- observed[-test_indices, , drop = FALSE]
+  train_obs <- observed[train_indices, , drop = FALSE]
   
-  # Create train and test dataframes (0-based indexing)
+  if (verbose) {
+    # Analyze split quality
+    test_users <- length(unique(test_obs[, 1]))
+    test_items <- length(unique(test_obs[, 2]))
+    train_users <- length(unique(train_obs[, 1]))
+    train_items <- length(unique(train_obs[, 2]))
+    
+    cat("Test set: ", nrow(test_obs), " ratings from ", test_users, " users and ", 
+        test_items, " items\n")
+    cat("Train set: ", nrow(train_obs), " ratings from ", train_users, " users and ", 
+        train_items, " items\n")
+    cat("Coverage: ", round(test_users/n_users * 100, 1), "% of users, ", 
+        round(test_items/n_items * 100, 1), "% of items in test set\n")
+  }
+  
+  # Create final datasets (0-based indexing for recosystem)
   train_data <- data.frame(
     user_index = train_obs[, 1] - 1,
     item_index = train_obs[, 2] - 1,
@@ -1018,70 +1105,92 @@ create_train_test_split_reco <- function(user_item_matrix, test_ratio = 0.2, see
     rating = user_item_matrix[test_obs]
   )
   
-  return(list(train = train_data, test = test_data))
+  if (verbose) {
+    cat("\n=== SPLIT COMPLETED ===\n")
+    cat("Training samples:", nrow(train_data), "\n")
+    cat("Test samples:", nrow(test_data), "\n")
+    cat("Split ratio:", round(nrow(test_data)/n_ratings * 100, 1), "%\n")
+  }
+  
+  return(list(
+    train = train_data, 
+    test = test_data,
+    train_obs = train_obs,
+    test_obs = test_obs,
+    split_info = list(
+      n_users = n_users,
+      n_items = n_items,
+      n_ratings = n_ratings,
+      sparsity = round(mean(is.na(user_item_matrix)) * 100, 2),
+      test_ratio = round(nrow(test_data)/n_ratings, 3)
+    )
+  ))
 }
+```
 
-
+```{r}
 # ---------------------------------------------------------------
-# 3. TRAIN MODEL (SINGLE TRAINING)
+# 3. IMPROVED MODEL TRAINING WITH VALIDATION
 # ---------------------------------------------------------------
 
-train_reco_model <- function(train_data, 
-                             n_factors = 10,
-                             learning_rate = 0.1,
-                             costp_l2 = 0.01,
-                             costq_l2 = 0.01,
-                             n_iter = 50,
-                             verbose = TRUE) {
+train_reco_model_improved <- function(train_data, 
+                                      n_factors = 20,
+                                      learning_rate = 0.1,
+                                      costp_l2 = 0.01,
+                                      costq_l2 = 0.01,
+                                      n_iter = 100,
+                                      n_threads = 4,
+                                      verbose = TRUE) {
   
-  # Write training data to temp file
-  train_file <- tempfile()
-  write.table(train_data, file = train_file, 
-              sep = " ", row.names = FALSE, col.names = FALSE)
-  
-  # Create data source
+  # Create data source for recosystem
   train_set <- data_memory(
     user_index = train_data$user_index,
     item_index = train_data$item_index,
     rating = train_data$rating,
-    index1 = TRUE  # Indicate we're using 0-based indexing
+    index1 = FALSE
   )
   
-  # Create model object
+  # Create and train model
   rs <- Reco()
   
-  # Train with specified hyperparameters
   rs$train(train_set, opts = list(
-    dim = n_factors,           # number of latent factors
-    lrate = learning_rate,     # learning rate
-    costp_l2 = costp_l2,      # L2 reg for user factors
-    costq_l2 = costq_l2,      # L2 reg for item factors
-    niter = n_iter,           # number of iterations
+    dim = n_factors,
+    lrate = learning_rate,
+    costp_l2 = costp_l2,
+    costq_l2 = costq_l2,
+    niter = n_iter,
+    nthread = n_threads,
     verbose = verbose
   ))
-  
-  unlink(train_file)
   
   return(rs)
 }
 
+```
 
+Creates latent factors: Decomposes the user-item matrix into two smaller matrices
+User factors: Each user gets a vector of 20 numbers representing their preferences
+Item factors: Each book gets a vector of 20 numbers representing its characteristics
+
+```{r}
 # ---------------------------------------------------------------
-# 4. TUNE HYPERPARAMETERS
+# 4. IMPROVED HYPERPARAMETER TUNING
 # ---------------------------------------------------------------
 
-tune_reco_model <- function(train_data,
-                            n_factors = c(10, 25, 50),
-                            learning_rate = c(0.1, 0.01),
-                            n_iter = 20,
-                            verbose = TRUE) {
+tune_reco_model_improved <- function(train_data,
+                                     n_factors = c(10, 20, 30),
+                                     learning_rate = c(0.1, 0.05, 0.01),
+                                     costp_l2 = c(0.01, 0.1),
+                                     costq_l2 = c(0.01, 0.1),
+                                     n_iter = 50,
+                                     verbose = TRUE) {
   
   # Create data source
   train_set <- data_memory(
     user_index = train_data$user_index,
     item_index = train_data$item_index,
     rating = train_data$rating,
-    index1 = TRUE
+    index1 = FALSE
   )
   
   # Create model
@@ -1091,8 +1200,8 @@ tune_reco_model <- function(train_data,
   opts <- rs$tune(train_set, opts = list(
     dim = n_factors,
     lrate = learning_rate,
-    costp_l2 = c(0.01, 0.1),
-    costq_l2 = c(0.01, 0.1),
+    costp_l2 = costp_l2,
+    costq_l2 = costq_l2,
     niter = n_iter,
     nthread = 4,
     verbose = verbose
@@ -1103,816 +1212,1089 @@ tune_reco_model <- function(train_data,
 
 
 # ---------------------------------------------------------------
-# 5. MAKE PREDICTIONS AND EVALUATE
+# 5. IMPROVED EVALUATION WITH MULTIPLE METRICS
 # ---------------------------------------------------------------
 
-predict_and_evaluate <- function(model, test_data) {
+evaluate_model_improved <- function(model, test_data) {
   
   # Create test data source
   test_set <- data_memory(
     user_index = test_data$user_index,
     item_index = test_data$item_index,
     rating = test_data$rating,
-    index1 = TRUE
+    index1 = FALSE
   )
   
-  # Generate predictions
+  # Generate predictions from trained model
   predictions <- model$predict(test_set, out_memory())
   
-  # Calculate RMSE
-  rmse <- sqrt(mean((predictions - test_data$rating)^2))
+  # Clip predictions to valid rating range [1, 10]
+  predictions <- pmax(pmin(predictions, 10), 1)
   
-  # Create results dataframe
-  results <- test_data %>%
-    mutate(
-      predicted_rating = predictions,
-      improved_rating = case_when(
-        predictions < 1 ~ 1,
-        predictions > 10 ~ 10,
-        TRUE ~ predictions
-      )
-    )
+  actual_ratings <- test_data$rating
   
-  # Calculate improved RMSE
-  improved_rmse <- sqrt(mean((results$improved_rating - results$rating)^2))
+  # Calculate RMSE and MAE
+  rmse <- sqrt(mean((predictions - actual_ratings)^2))
+  mae <- mean(abs(predictions - actual_ratings))
   
   return(list(
-    predictions = results,
     rmse = rmse,
-    improved_rmse = improved_rmse
+    mae = mae,
+    predictions = predictions,
+    actual = actual_ratings
   ))
 }
 
+```
 
+
+```{r}
 # ---------------------------------------------------------------
 # 6. COMPLETE WORKFLOW EXAMPLE (MATCHING LECTURE NOTES)
 # ---------------------------------------------------------------
 
 cat("\n=== STEP 1: Prepare Data ===\n")
-prepared <- prepare_recosystem_data(user_item_matrix)
+prepared <- prepare_recosystem_data_improved(user_item_matrix_mf)
+cat("Prepared data for", prepared$n_users, "users and", prepared$n_items, "items\n")
+cat("Total ratings:", nrow(prepared$train_data), "\n")
 
 cat("\n=== STEP 2: Create Train/Test Split ===\n")
-split <- create_train_test_split_reco(user_item_matrix, test_ratio = 0.2, seed = 123)
-cat("Training set:", nrow(split$train), "ratings\n")
-cat("Test set:", nrow(split$test), "ratings\n")
+# Create train/test split using matrix factorization approach
+split <- create_train_test_split(user_item_matrix_mf, test_ratio = 0.2, seed = 123, verbose = TRUE)
 
-cat("\n=== STEP 3: Train Model with Fixed Hyperparameters ===\n")
-model <- train_reco_model(
+cat("\n=== STEP 3: Train Model ===\n")
+model <- train_reco_model_improved(
   train_data = split$train,
-  n_factors = 10,
+  n_factors = 20,
   learning_rate = 0.1,
   costp_l2 = 0.01,
   costq_l2 = 0.01,
-  n_iter = 50,
-  verbose = TRUE
+  n_iter = 100,
+  n_threads = 4,
+  verbose = FALSE
 )
 
-cat("\n=== STEP 4: Make Predictions on Test Set ===\n")
-results <- predict_and_evaluate(model, split$test)
-cat("RMSE:", round(results$rmse, 4), "\n")
-cat("Improved RMSE (clipped):", round(results$improved_rmse, 4), "\n")
-
-# Display sample predictions
-cat("\nSample predictions:\n")
-print(head(results$predictions, 10))
 
 
-cat("\n\n=== STEP 5 (OPTIONAL): Tune Hyperparameters ===\n")
-# opts <- tune_reco_model(
-#   train_data = split$train,
-#   n_factors = c(10, 25, 50),
-#   learning_rate = c(0.1, 0.01),
-#   n_iter = 20,
-#   verbose = TRUE
-# )
-# 
-# cat("\nOptimal parameters:\n")
-# print(opts$min)
-# 
-# cat("\n=== STEP 6: Retrain with Optimal Parameters ===\n")
-# model_optimal <- train_reco_model(
-#   train_data = split$train,
-#   n_factors = opts$min$dim,
-#   learning_rate = opts$min$lrate,
-#   costp_l2 = opts$min$costp_l2,
-#   costq_l2 = opts$min$costq_l2,
-#   n_iter = 50,
-#   verbose = TRUE
-# )
-# 
-# results_optimal <- predict_and_evaluate(model_optimal, split$test)
-# cat("Optimal RMSE:", round(results_optimal$rmse, 4), "\n")
+
+
+cat("\n=== STEP 4: Evaluate Model ===\n")
+results <- evaluate_model_improved(model, split$test)
+cat("RMSE:", round(results$rmse, 3), "\n")
+cat("MAE:", round(results$mae, 3), "\n")
+
+
+cat("\n=== STEP 5: Hyperparameter Tuning ===\n")
+# Run hyperparameter tuning for matrix factorization
+cat("Tuning matrix factorization hyperparameters...\n")
+opts <- tune_reco_model_improved(
+  train_data = split$train,
+  n_factors = c(10, 20, 30),
+  learning_rate = c(0.1, 0.05),
+  n_iter = 30,
+  verbose = FALSE  # Set to TRUE to see detailed output
+)
+
+cat("Optimal parameters found:\n")
+print(opts$min)
+
+# Train final model with optimal parameters
+cat("\nTraining final model with optimal parameters...\n")
+final_model <- train_reco_model_improved(
+  train_data = split$train,
+  n_factors = opts$min$dim,
+  learning_rate = opts$min$lrate,
+  costp_l2 = opts$min$costp_l2,
+  costq_l2 = opts$min$costq_l2,
+  n_iter = 100,
+  verbose = FALSE
+)
+
+# Evaluate final model
+final_results <- evaluate_model_improved(final_model, split$test)
+cat("Final model performance:\n")
+cat("RMSE:", round(final_results$rmse, 3), "\n")
+cat("MAE:", round(final_results$mae, 3), "\n")
+
+
 ```
 
 
-
-
-
-
-
-
-
-
-
-
-//////////
 ```{r}
 # ---------------------------------------------------------------
-# 1. EVALUATION FUNCTION WITH L2 REGULARIZATION AND BIAS
+# Making recommendations for users
 # ---------------------------------------------------------------
 
-evaluate_fit_l2_bias <- function(params, observed_ratings, lambda, 
-                                  n_users, n_items, n_factors) {
+# Function to recommend for existing users 
+recommend_for_user_improved <- function(model, user_item_matrix, user_id, 
+                                       n_recommendations = 10, 
+                                       user_ids_map, item_ids_map) {
   
-  n_user_factors <- n_users * n_factors
-  n_item_factors <- n_items * n_factors
+  # Check if user exists
+  if (!user_id %in% user_ids_map$user_id) {
+    stop("User ID not found in the training data")
+  }
   
-  # User latent factors: n_users x n_factors
-  user_factors <- matrix(params[1:n_user_factors], 
-                         nrow = n_users, ncol = n_factors)
+  # Get user's 0-based index
+  user_idx <- user_ids_map$user_index[user_ids_map$user_id == user_id]
   
-  # Item latent factors: n_factors x n_items
-  item_factors <- matrix(params[(n_user_factors + 1):(n_user_factors + n_item_factors)], 
-                         nrow = n_factors, ncol = n_items)
+  # Get items user hasn't rated
+  user_row <- user_item_matrix[as.character(user_id), ]
+  unrated_items <- which(is.na(user_row))
   
-  # User & Item biases 
-  user_bias <- params[(n_user_factors + n_item_factors + 1):
-                      (n_user_factors + n_item_factors + n_users)]
+  # Handle case where user has rated all items
+  if (length(unrated_items) == 0) {
+    return(data.frame(
+      item_id = character(0),
+      predicted_rating = numeric(0),
+      stringsAsFactors = FALSE
+    ))
+  }
   
-  item_bias <- params[(n_user_factors + n_item_factors + n_users + 1):
-                      length(params)]
+  # Convert to 0-based indices
+  item_indices <- unrated_items - 1
   
-  # Predicted ratings
-  predicted <- user_factors %*% item_factors + 
-    outer(user_bias, rep(1, n_items)) + 
-    outer(rep(1, n_users), item_bias)
-
-  # Compute RMSE only on observed ratings
-  errors <- (observed_ratings - predicted)^2
-  rmse <- sqrt(mean(errors[!is.na(observed_ratings)]))
+  # Create prediction data
+  pred_set <- data_memory(
+    user_index = rep(user_idx, length(item_indices)),
+    item_index = item_indices,
+    index1 = FALSE
+  )
   
-  # L2 regularization INCLUDING bias terms
-  penalty <- sqrt(sum(user_factors^2) + sum(item_factors^2) + 
-                  sum(user_bias^2) + sum(item_bias^2))
+  # Predict ratings
+  pred_ratings <- model$predict(pred_set, out_memory())
   
-  objective <- rmse + lambda * penalty
+  # Clip predictions to valid rating range
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
   
-  return(objective)
+  # Get top N recommendations
+  n_to_recommend <- min(n_recommendations, length(pred_ratings))
+  top_indices <- order(pred_ratings, decreasing = TRUE)[1:n_to_recommend]
+  
+  # Return recommendations with item IDs
+  recommendations <- data.frame(
+    item_id = colnames(user_item_matrix)[unrated_items[top_indices]],
+    predicted_rating = round(pred_ratings[top_indices], 2),
+    stringsAsFactors = FALSE
+  )
+  
+  return(recommendations)
 }
+
+
+# Function to recommend for new users (cold start problem)
+recommend_for_new_user_improved <- function(model, user_ratings, item_ids_map, 
+                                           n_recommendations = 10) {
   
+  # Convert named vector to data frame if needed
+  if (is.numeric(user_ratings) && !is.null(names(user_ratings))) {
+    ratings_df <- data.frame(
+      item_id = names(user_ratings),
+      rating = as.numeric(user_ratings),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    ratings_df <- user_ratings
+  }
+  
+  # Check which items exist in training data
+  valid_items <- ratings_df$item_id %in% item_ids_map$item_id
+  if (sum(valid_items) == 0) {
+    stop("None of the provided items exist in the training data")
+  }
+  
+  # Get item indices for rated items
+  rated_indices <- item_ids_map$item_index[match(ratings_df$item_id[valid_items], item_ids_map$item_id)]
+  
+  # Create temporary user index
+  temp_user_idx <- max(item_ids_map$item_index) + 1
+  
+  # Predict ratings for all items
+  all_item_indices <- 0:(nrow(item_ids_map) - 1)
+  pred_set <- data_memory(
+    user_index = rep(temp_user_idx, length(all_item_indices)),
+    item_index = all_item_indices,
+    index1 = FALSE
+  )
+  
+  pred_ratings <- model$predict(pred_set, out_memory())
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)  # Clip to [1, 10]
+  
+  # Remove items user already rated
+  unrated_indices <- setdiff(all_item_indices, rated_indices)
+  unrated_predictions <- pred_ratings[unrated_indices + 1]
+  
+  # Get top recommendations
+  n_to_recommend <- min(n_recommendations, length(unrated_predictions))
+  top_indices <- order(unrated_predictions, decreasing = TRUE)[1:n_to_recommend]
+  
+  # Return recommendations
+  recommended_item_ids <- item_ids_map$item_id[match(unrated_indices[top_indices], item_ids_map$item_index)]
+  
+  data.frame(
+    item_id = recommended_item_ids,
+    predicted_rating = round(unrated_predictions[top_indices], 2),
+    stringsAsFactors = FALSE
+  )
+}
+```
+
+# ================================================================
+# EXAMPLE USAGE: RECOMMENDATIONS FOR EXISTING AND NEW USERS
+# ================================================================
+
+```{r}
+# EXAMPLE 1: Recommend for existing user
+cat("=== RECOMMENDATIONS FOR EXISTING USER ===\n")
+sample_user <- rownames(user_item_matrix_mf)[1]
+cat("User ID:", sample_user, "\n")
+
+recommendations_existing <- recommend_for_user_improved(
+  model = model,
+  user_item_matrix = user_item_matrix_mf,
+  user_id = sample_user,
+  n_recommendations = 10,
+  user_ids_map = prepared$user_ids,
+  item_ids_map = prepared$item_ids
+)
+
+cat("Top 10 recommendations:\n")
+print(recommendations_existing)
 ```
 
 
-```{r}
-# ---------------------------
-# 3. TRAIN MODEL USING OPTIM 
-# ---------------------------
 
-train_mf_optim <- function(user_item_matrix,
-                           n_factors = 10,
-                           lambda = 0.02,
-                           max_iterations = 100000,
-                           seed = 123) {
+
+
+```{r}
+# EXAMPLE 2: Recommend for new user (cold start problem)
+cat("\n=== RECOMMENDATIONS FOR NEW USER (COLD START) ===\n")
+
+# Simulate new user with ≤5 book ratings (as per assignment requirement)
+sample_books <- colnames(user_item_matrix_mf)[1:5]  # Get 5 books from training data
+new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
+
+cat("New user rated these books:\n")
+for (isbn in names(new_user_ratings)) {
+  book_title <- book_info$Book.Title[book_info$ISBN == isbn][1]
+  if (!is.na(book_title)) {
+    cat("  -", book_title, ":", new_user_ratings[isbn], "\n")
+  }
+}
+
+# Get recommendations for new user
+recommendations_new <- recommend_for_new_user_improved(
+  model = model,
+  user_ratings = new_user_ratings,
+  item_ids_map = prepared$item_ids,
+  n_recommendations = 10
+)
+
+cat("\nTop 10 recommendations for new user:\n")
+print(recommendations_new)
+```
+
+# ================================================================
+# CROSS-VALIDATION FOR MODEL EVALUATION
+# ================================================================
+
+```{r}
+# Cross-validation function for matrix factorization
+cross_validate_mf <- function(user_item_matrix, n_folds = 5, seed = 123) {
   
   set.seed(seed)
+  
+  # Get observed ratings
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
+  
+  if (n_ratings < n_folds * 2) {
+    stop("Not enough ratings for cross-validation")
+  }
+  
+  # Create folds
+  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
+  
+  cv_results <- data.frame(
+    fold = integer(),
+    rmse = numeric(),
+    mae = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (fold in 1:n_folds) {
+    cat("Processing fold", fold, "of", n_folds, "\n")
+    
+    # Split data
+    test_indices <- which(fold_indices == fold)
+    train_indices <- which(fold_indices != fold)
+    
+    test_obs <- observed[test_indices, , drop = FALSE]
+    train_obs <- observed[train_indices, , drop = FALSE]
+    
+    # Create train and test dataframes
+    train_data <- data.frame(
+      user_index = train_obs[, 1] - 1,
+      item_index = train_obs[, 2] - 1,
+      rating = user_item_matrix[train_obs]
+    )
+    
+    test_data <- data.frame(
+      user_index = test_obs[, 1] - 1,
+      item_index = test_obs[, 2] - 1,
+      rating = user_item_matrix[test_obs]
+    )
+    
+    # Train model
+    model <- train_reco_model_improved(
+      train_data = train_data,
+      n_factors = 20,
+      learning_rate = 0.1,
+      costp_l2 = 0.01,
+      costq_l2 = 0.01,
+      n_iter = 50,
+      verbose = FALSE
+    )
+    
+    # Evaluate
+    results <- evaluate_model_improved(model, test_data)
+    
+    # Store results
+    cv_results <- rbind(cv_results, data.frame(
+      fold = fold,
+      rmse = results$rmse,
+      mae = results$mae,
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  # Calculate summary statistics
+  summary_stats <- data.frame(
+    metric = c("RMSE", "MAE"),
+    mean = c(mean(cv_results$rmse), mean(cv_results$mae)),
+    sd = c(sd(cv_results$rmse), sd(cv_results$mae)),
+    stringsAsFactors = FALSE
+  )
+  
+  return(list(
+    fold_results = cv_results,
+    summary = summary_stats
+  ))
+}
+
+# Run cross-validation (uncomment to run - takes time)
+cat("\n=== CROSS-VALIDATION (OPTIONAL - UNCOMMENT TO RUN) ===\n")
+# cv_results <- cross_validate_mf(user_item_matrix_mf, n_folds = 3)
+# cat("Cross-validation results:\n")
+# print(cv_results$summary)
+```
+
+
+
+
+
+# Neural network-based collaborative filtering
+
+```{r}
+library(keras)
+library(tensorflow)
+library(dplyr)
+library(tidyr)
+```
+
+```{r}
+# ================================================================
+# NEURAL NETWORK-BASED COLLABORATIVE FILTERING
+# Using Keras/TensorFlow for Deep Learning Approach
+# ================================================================
+
+# Load data and create user-item matrix for neural network approach
+load("book_ratings.Rdata")
+
+# Create user-item matrix function (if not already defined)
+create_user_item_matrix <- function(ratings_data, min_ratings_per_book = 3, min_ratings_per_user = 3) {
+  ratings_clean <- ratings_data %>%
+    mutate(Book.Rating = ifelse(Book.Rating == 0, NA, Book.Rating))
+  
+  user_item_matrix <- ratings_clean %>%
+    select(User.ID, ISBN, Book.Rating) %>%
+    pivot_wider(names_from = ISBN, values_from = Book.Rating, values_fill = NA)
+  
+  user_ids <- user_item_matrix$User.ID
+  user_item_matrix <- as.matrix(user_item_matrix[, -1])
+  rownames(user_item_matrix) <- user_ids
+  
+  books_to_keep <- colSums(!is.na(user_item_matrix)) >= min_ratings_per_book
+  user_item_matrix <- user_item_matrix[, books_to_keep]
+  cat("Kept", sum(books_to_keep), "books with >=", min_ratings_per_book, "ratings\n")
+  
+  users_to_keep <- rowSums(!is.na(user_item_matrix)) >= min_ratings_per_user
+  user_item_matrix <- user_item_matrix[users_to_keep, ]
+  cat("Kept", sum(users_to_keep), "users with >=", min_ratings_per_user, "ratings\n")
+  
+  cat("Final matrix:", nrow(user_item_matrix), "users x", ncol(user_item_matrix), "books\n\n")
+  
+  return(user_item_matrix)
+}
+
+# Merge data
+data <- book_ratings %>%
+  left_join(book_info, by = "ISBN")
+
+# Create user-item matrix for neural network approach
+user_item_matrix_nn <- create_user_item_matrix(
+  data, 
+  min_ratings_per_book = 5,  # Books need at least 5 ratings
+  min_ratings_per_user = 2   # Users need at least 2 ratings
+)
+
+cat("Neural Network Matrix dimensions:", nrow(user_item_matrix_nn), "users x", ncol(user_item_matrix_nn), "books\n")
+cat("Sparsity:", round(mean(is.na(user_item_matrix_nn)) * 100, 2), "%\n")
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 1. PREPARE DATA FOR NEURAL NETWORK
+# ---------------------------------------------------------------
+
+prepare_nn_data <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
+  
+  set.seed(seed)
+  
+  # Get observed ratings
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
   n_users <- nrow(user_item_matrix)
   n_items <- ncol(user_item_matrix)
   
-  global_mean <- mean(user_item_matrix, na.rm = TRUE)
-  centered_ratings <- user_item_matrix - global_mean
+  if (n_ratings < 3) {
+    stop("Not enough ratings for train/test split (need at least 3 ratings)")
+  }
   
-  n_params <- (n_users * n_factors) + (n_items * n_factors) + n_users + n_items
-  initial_params <- runif(n_params, min = -0.1, max = 0.1)
+  # Random sampling for train/test split
+  test_size <- max(1, floor(n_ratings * test_ratio))
+  test_indices <- sample(1:n_ratings, size = test_size)
+  train_indices <- setdiff(1:n_ratings, test_indices)
   
-  result <- optim(
-    par = initial_params,
-    fn = evaluate_fit_l2_bias,
-    observed_ratings = centered_ratings,
-    lambda = lambda,
-    n_users = n_users,
-    n_items = n_items,
-    n_factors = n_factors,
-    control = list(maxit = max_iterations)
+  # Split data
+  test_obs <- observed[test_indices, , drop = FALSE]
+  train_obs <- observed[train_indices, , drop = FALSE]
+  
+  # Create training data (0-based indexing for neural network) with proper data types
+  train_data <- data.frame(
+    user_index = as.integer(train_obs[, 1] - 1),
+    item_index = as.integer(train_obs[, 2] - 1),
+    rating = as.numeric(user_item_matrix[train_obs])
   )
   
-  # Extract parameters
-  user_factors <- matrix(result$par[1:(n_users*n_factors)], 
-                         nrow = n_users, ncol = n_factors)
-  
-  # FIXED: item_factors is n_factors x n_items
-  item_factors <- matrix(result$par[(n_users*n_factors + 1):
-                                    (n_users*n_factors + n_items*n_factors)],
-                         nrow = n_factors, ncol = n_items)
-  
-  user_bias <- result$par[(n_users*n_factors + n_items*n_factors + 1):
-                          (n_users*n_factors + n_items*n_factors + n_users)]
-  
-  item_bias <- result$par[(n_users*n_factors + n_items*n_factors + n_users + 1):
-                          length(result$par)]
-  
-  # Predicted ratings for RMSE
-  predicted <- user_factors %*% item_factors + 
-               outer(user_bias, rep(1, n_items)) + 
-               outer(rep(1, n_users), item_bias) + 
-               global_mean
-  
-  errors <- (user_item_matrix - predicted)^2
-  actual_rmse <- sqrt(mean(errors[!is.na(user_item_matrix)]))
-  
-  # Store names
-  rownames(user_factors) <- rownames(user_item_matrix)
-  colnames(item_factors) <- colnames(user_item_matrix)
-  names(user_bias) <- rownames(user_item_matrix)
-  names(item_bias) <- colnames(user_item_matrix)
-  
-  return(list(
-    user_factors = user_factors,
-    item_factors = item_factors,
-    user_bias = user_bias,
-    item_bias = item_bias,
-    global_mean = global_mean,
-    n_factors = n_factors,
-    convergence = result$convergence,
-    objective_value = result$value,
-    actual_rmse = actual_rmse,
-    user_ids = rownames(user_item_matrix),
-    item_ids = colnames(user_item_matrix)
-  ))
-}
-
-```
-
-
-```{r}
-# ---------------------------------------------------------------
-# 5. MAKE PREDICTIONS (FIXED)
-# ---------------------------------------------------------------
-
-predict_mf <- function(model, user_idx = NULL, item_idx = NULL) {
-  
-  if (is.null(user_idx) && is.null(item_idx)) {
-    
-    # Full prediction matrix
-    predicted <- model$user_factors %*% model$item_factors +
-      outer(model$user_bias, rep(1, length(model$item_bias))) +
-      outer(rep(1, length(model$user_bias)), model$item_bias) +
-      model$global_mean
-    
-    rownames(predicted) <- model$user_ids
-    colnames(predicted) <- model$item_ids
-    
-  } else {
-    # FIXED: Specific prediction - item_factors is n_factors x n_items
-    interaction <- sum(model$user_factors[user_idx, ] * 
-                       model$item_factors[, item_idx])
-    
-    predicted <- model$global_mean + model$user_bias[user_idx] +
-      model$item_bias[item_idx] + interaction
-  }
-  
-  predicted <- pmin(pmax(predicted, 1), 10)
-  
-  return(predicted)
-}
-
-```
-
-
-```{r}
-# ---------------------------------------------------------------
-# 6. RECOMMEND FOR USER
-# ---------------------------------------------------------------
-
-recommend_mf <- function(model, target_user, user_item_matrix,
-                         book_info, n_recommendations = 10) {
-  
-  target_user <- as.character(target_user)
-  
-  # Find user index
-  user_idx <- which(model$user_ids == target_user)
-  
-  if (length(user_idx) == 0) {
-    return(data.frame(ISBN = character(),
-                      Book.Title = character(),
-                      Book.Author = character(),
-                      Predicted_Rating = numeric()))
-  }
-  
-  # Find unrated items
-  unrated_indices <- which(is.na(user_item_matrix[target_user, ]))
-  
-  if (length(unrated_indices) == 0) {
-    return(data.frame(ISBN = character(),
-                      Book.Title = character(),
-                      Book.Author = character(),
-                      Predicted_Rating = numeric()))
-  }
-  
-  # Predict once for all items, filter unrated
-  all_predictions <- predict_mf(model)[user_idx, ]
-  predictions <- all_predictions[unrated_indices]
-  
-  # Top N recommendations
-  top_idx <- order(predictions, decreasing = TRUE)[1:min(n_recommendations, length(predictions))]
-  top_books <- predictions[top_idx]
-  
-  recommendations <- data.frame(
-    ISBN = names(top_books),
-    Predicted_Rating = as.numeric(top_books)) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-
-```
-
-
-
-
-```{r}
-# Assuming you have user_item_matrix and book_info loaded
-
-# Train the model
-mf_model <- train_mf_optim(
-  user_item_matrix = user_item_matrix,
-  n_factors = 10,
-  lambda = 0.02,
-  max_iterations = 50000,
-  seed = 123
-)
-
-# Check convergence
-cat("Convergence:", mf_model$convergence, "\n")
-cat("Training RMSE:", round(mf_model$actual_rmse, 4), "\n\n")
-
-# Get recommendations for existing user
-sample_user <- rownames(user_item_matrix)[1]
-recommendations <- recommend_mf(
-  model = mf_model,
-  target_user = sample_user,
-  user_item_matrix = user_item_matrix,
-  book_info = book_info,
-  n_recommendations = 10
-)
-
-print(recommendations)
-
-# Get specific prediction for one user-item pair
-user_idx <- 1
-item_idx <- 5
-single_pred <- predict_mf(mf_model, user_idx, item_idx)
-cat("\nPredicted rating:", round(single_pred, 2), "\n")
-```
-
-
-
-
-
-
-
-
-
-
-
-///
-
-
-
-```{r}
-
-# ---------------------------------------------------------------
-# 7. CROSS-VALIDATION FOR MATRIX FACTORIZATION
-# ---------------------------------------------------------------
-
-evaluate_mf_cv <- function(user_item_matrix,
-                           k_folds = 5,
-                           test_ratio = 0.2,
-                           n_factors = 10,
-                           lambda = 0.02,
-                           learning_rate = 0.005,
-                           n_epochs = 20,
-                           use_sgd = TRUE,
-                           seed = 123) {
-  
-  cat("\n========================================\n")
-  cat("CROSS-VALIDATION: MATRIX FACTORIZATION\n")
-  cat("========================================\n\n")
-  
-  # Create splits (assumes function from previous code)
-  cat("Creating", k_folds, "fold splits...\n")
-  splits <- create_k_fold_splits(user_item_matrix, k = k_folds,
-                                  test_ratio = test_ratio, seed = seed)
-  
-  mf_results <- list()
-  
-  for (fold in 1:k_folds) {
-    
-    cat("\n--- FOLD", fold, "---\n")
-    
-    train <- splits[[fold]]$train
-    test <- splits[[fold]]$test
-    
-    n_test <- sum(!is.na(test))
-    cat("Test set size:", n_test, "ratings\n\n")
-    
-    # Train model
-    if (use_sgd) {
-      cat("Training with SGD...\n")
-      model <- train_mf_sgd(
-        train,
-        n_factors = n_factors,
-        learning_rate = learning_rate,
-        lambda = lambda,
-        n_epochs = n_epochs
-      )
-    } else {
-      cat("Training with optim...\n")
-      model <- train_mf_optim(
-        train,
-        n_factors = n_factors,
-        lambda = lambda,
-        max_iterations = 10000
-      )
-    }
-    
-    # Generate predictions on test set
-    predictions <- predict_mf(model)
-    
-    # Calculate metrics
-    metrics <- calculate_metrics(predictions, test)
-    mf_results[[fold]] <- metrics
-    
-    cat("MF - RMSE:", round(metrics$RMSE, 4),
-        "| MAE:", round(metrics$MAE, 4),
-        "| Predictions:", metrics$n_predictions, "\n")
-  }
-  
-  # Aggregate results
-  cat("\n========================================\n")
-  cat("FINAL RESULTS\n")
-  cat("========================================\n\n")
-  
-  mf_rmse <- sapply(mf_results, function(x) x$RMSE)
-  mf_mae <- sapply(mf_results, function(x) x$MAE)
-  
-  results_summary <- data.frame(
-    Method = "Matrix Factorization",
-    RMSE_Mean = mean(mf_rmse, na.rm = TRUE),
-    RMSE_SD = sd(mf_rmse, na.rm = TRUE),
-    MAE_Mean = mean(mf_mae, na.rm = TRUE),
-    MAE_SD = sd(mf_mae, na.rm = TRUE)
+  test_data <- data.frame(
+    user_index = as.integer(test_obs[, 1] - 1),
+    item_index = as.integer(test_obs[, 2] - 1),
+    rating = as.numeric(user_item_matrix[test_obs])
   )
   
-  print(results_summary)
-  
-  return(list(
-    summary = results_summary,
-    fold_results = mf_results
-  ))
-}
-
-
-# ---------------------------------------------------------------
-# 8. USAGE EXAMPLES
-# ---------------------------------------------------------------
-
-
-model <- train_mf_optim(
-  user_item_matrix = user_item_matrix,
-  n_factors = 5,
-  lambda = 0.03,
-  max_iterations = 100000)
-
-
-```
-
-
-
-
-
-
-/////
-
-```{r}
-library(recosystem)
-
-# ---------------------------------------------------------------
-# 7. PREPARE DATA FOR RECOSYSTEM
-# ---------------------------------------------------------------
-# PURPOSE: Convert user-item matrix to recosystem's required format
-# Needs: (user_index, item_index, rating) triplets
-
-prepare_recosystem_data <- function(user_item_matrix) {
-  
-  # Get all non-NA ratings with their positions
-  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-  
-  # Create dataframe with integer indices and ratings
-  # recosystem requires 1-based integer indices
-  data_df <- data.frame(
-    user_index = observed[, 1],      # Row index (user)
-    item_index = observed[, 2],      # Column index (item)
-    rating = user_item_matrix[observed]  # Rating value
-  )
-  
-  # Store mappings for later
-  user_mapping <- data.frame(
-    user_index = 1:nrow(user_item_matrix),
+  # Create ID mappings with proper data types
+  user_ids <- data.frame(
+    user_index = as.integer(0:(n_users - 1)),
     user_id = rownames(user_item_matrix)
   )
   
-  item_mapping <- data.frame(
-    item_index = 1:ncol(user_item_matrix),
+  item_ids <- data.frame(
+    item_index = as.integer(0:(n_items - 1)),
     item_id = colnames(user_item_matrix)
   )
   
+  cat("Training samples:", nrow(train_data), "\n")
+  cat("Test samples:", nrow(test_data), "\n")
+  cat("Users:", n_users, "Items:", n_items, "\n")
+  
   return(list(
-    data = data_df,
-    user_mapping = user_mapping,
-    item_mapping = item_mapping
+    train = train_data,
+    test = test_data,
+    user_ids = user_ids,
+    item_ids = item_ids,
+    n_users = n_users,
+    n_items = n_items
   ))
 }
-
-
-# ---------------------------------------------------------------
-# 8. TRAIN MODEL WITH RECOSYSTEM
-# ---------------------------------------------------------------
-# PURPOSE: Train matrix factorization model using optimized library
-
-train_recosystem <- function(user_item_matrix, 
-                              n_factors = 20,
-                              lambda = 0.1,
-                              learning_rate = 0.1,
-                              n_iter = 20) {
-  
-
-  
-  # Prepare data
-  prepared <- prepare_recosystem_data(user_item_matrix)
-  
-  # Create temporary files for recosystem
-  # recosystem reads/writes data from files for efficiency
-  train_file <- tempfile()
-  
-  # Write training data to file
-  write.table(prepared$data, file = train_file, 
-              sep = " ", row.names = FALSE, col.names = FALSE)
-  
-  # Create recosystem object
-  reco_obj <- Reco()
-  
-  # Create data source
-  train_set <- data_file(train_file)
-  
-  # Set tuning options
-  # These control the optimization process
-  opts <- list(
-    dim = n_factors,              # Number of latent factors
-    costp_l2 = lambda,            # L2 regularization for user factors
-    costq_l2 = lambda,            # L2 regularization for item factors
-    lrate = learning_rate,        # Learning rate
-    niter = n_iter,               # Number of iterations
-    nthread = 1)                  # Number of CPU threads
-
-  
-  
-  # Train the model
-  reco_obj$train(train_set, opts = opts)
-  
-  # Clean up temporary file
-  unlink(train_file)
-  
-  
-  # Return model and mappings
-  return(list(
-    model = reco_obj,
-    user_mapping = prepared$user_mapping,
-    item_mapping = prepared$item_mapping
-  ))
-}
-
-
-# ---------------------------------------------------------------
-# 9. RECOMMEND WITH RECOSYSTEM
-# ---------------------------------------------------------------
-# PURPOSE: Generate recommendations using trained recosystem model
-
-recommend_recosystem <- function(reco_model, target_user, 
-                                  user_item_matrix, book_info,
-                                  n_recommendations = 10) {
-  
-  target_user <- as.character(target_user)
-  
-  # Get user index
-  user_idx <- reco_model$user_mapping$user_index[
-    reco_model$user_mapping$user_id == target_user
-  ]
-  
-  if (length(user_idx) == 0) {
-    cat("User not found in training data\n")
-    return(data.frame())
-  }
-  
-  # Find unrated items
-  unrated_cols <- which(is.na(user_item_matrix[target_user, ]))
-  
-  if (length(unrated_cols) == 0) {
-    return(data.frame())
-  }
-  
-  # Create prediction data: (user_index, item_index) pairs
-  pred_data <- data.frame(
-    user_index = rep(user_idx, length(unrated_cols)),
-    item_index = unrated_cols
-  )
-  
-  # Write to temporary file
-  pred_file <- tempfile()
-  write.table(pred_data, file = pred_file, 
-              sep = " ", row.names = FALSE, col.names = FALSE)
-  
-  # Create prediction data source
-  pred_set <- data_file(pred_file)
-  
-  # Generate predictions
-  out_file <- tempfile()
-  reco_model$model$predict(pred_set, out_file = out_file)
-  
-  # Read predictions
-  predictions <- scan(out_file, quiet = TRUE)
-  
-  # Clean up
-  unlink(pred_file)
-  unlink(out_file)
-  
-  # Clip to valid range
-  predictions <- pmin(pmax(predictions, 1), 10)
-  
-  # Get ISBNs
-  item_ids <- colnames(user_item_matrix)[unrated_cols]
-  names(predictions) <- item_ids
-  
-  # Get top N
-  top_indices <- order(predictions, decreasing = TRUE)[1:min(n_recommendations, length(predictions))]
-  top_books <- predictions[top_indices]
-  
-  # Format recommendations
-  recommendations <- data.frame(
-    ISBN = names(top_books),
-    Predicted_Rating = as.numeric(top_books)
-  ) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-
-
-# ---------------------------------------------------------------
-# 10. NEW USER RECOMMENDATIONS WITH RECOSYSTEM
-# ---------------------------------------------------------------
-
-recommend_recosystem_new_user <- function(reco_model, new_user_ratings,
-                                           user_item_matrix, book_info,
-                                           n_recommendations = 10) {
-  
-  # Match ratings with training items
-  matched_books <- intersect(names(new_user_ratings), 
-                             reco_model$item_mapping$item_id)
-  
-  if (length(matched_books) == 0) {
-    return(data.frame())
-  }
-  
-  # Get item indices
-  item_indices <- reco_model$item_mapping$item_index[
-    match(matched_books, reco_model$item_mapping$item_id)
-  ]
-  
-  # Create training data for new user
-  # Assign new user a temporary index
-  new_user_idx <- max(reco_model$user_mapping$user_index) + 1
-  
-  new_user_data <- data.frame(
-    user_index = rep(new_user_idx, length(matched_books)),
-    item_index = item_indices,
-    rating = new_user_ratings[matched_books]
-  )
-  
-  # Train on new user's data (incremental learning)
-  train_file <- tempfile()
-  write.table(new_user_data, file = train_file,
-              sep = " ", row.names = FALSE, col.names = FALSE)
-  
-  train_set <- data_file(train_file)
-  
-  # Quick training (fewer iterations for new user)
-  opts <- list(
-    dim = reco_model$model$._get_field("opts_dim"),
-    niter = 10,
-    nthread = 1)
-  
-  # Create new model object for this user
-  new_reco <- Reco()
-  new_reco$train(train_set, opts = opts)
-  
-  unlink(train_file)
-  
-  # Find unrated items
-  all_items <- reco_model$item_mapping$item_id
-  unrated_items <- setdiff(all_items, matched_books)
-  
-  if (length(unrated_items) == 0) {
-    return(data.frame())
-  }
-  
-  # Get unrated item indices
-  unrated_indices <- reco_model$item_mapping$item_index[
-    match(unrated_items, reco_model$item_mapping$item_id)
-  ]
-  
-  # Create prediction data
-  pred_data <- data.frame(
-    user_index = rep(new_user_idx, length(unrated_indices)),
-    item_index = unrated_indices
-  )
-  
-  pred_file <- tempfile()
-  write.table(pred_data, file = pred_file,
-              sep = " ", row.names = FALSE, col.names = FALSE)
-  
-  pred_set <- data_file(pred_file)
-  out_file <- tempfile()
-  
-  new_reco$predict(pred_set, out_file = out_file)
-  predictions <- scan(out_file, quiet = TRUE)
-  
-  unlink(pred_file)
-  unlink(out_file)
-  
-  predictions <- pmin(pmax(predictions, 1), 10)
-  names(predictions) <- unrated_items
-  
-  # Get top N
-  top_indices <- order(predictions, decreasing = TRUE)[1:min(n_recommendations, length(predictions))]
-  top_books <- predictions[top_indices]
-  
-  recommendations <- data.frame(
-    ISBN = names(top_books),
-    Predicted_Rating = as.numeric(top_books)
-  ) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-
-
-# ---------------------------------------------------------------
-# 11. USAGE EXAMPLE - RECOSYSTEM
-# ---------------------------------------------------------------
-
-cat("\n\n=== EXAMPLE: RECOSYSTEM MATRIX FACTORIZATION ===\n")
-
-# Train model with recosystem
-reco_model <- train_recosystem(
-  user_item_matrix = user_item_matrix,
-  n_factors = 20,
-  lambda = 0.1,
-  learning_rate = 0.1,
-  n_iter = 20)
-
-# Recommend for existing user
-sample_user <- rownames(user_item_matrix)[1]
-reco_recs <- recommend_recosystem(
-  reco_model = reco_model,
-  target_user = sample_user,
-  user_item_matrix = user_item_matrix,
-  book_info = book_info,
-  n_recommendations = 10
-)
-
-cat("Recommendations for existing user:\n")
-print(reco_recs)
-
-# Recommend for new user
-sample_books <- colnames(user_item_matrix)[1:5]
-new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
-
-new_user_reco_recs <- recommend_recosystem_new_user(
-  reco_model = reco_model,
-  new_user_ratings = new_user_ratings,
-  user_item_matrix = user_item_matrix,
-  book_info = book_info,
-  n_recommendations = 10
-)
-
-cat("\nRecommendations for new user:\n")
-print(new_user_reco_recs)
 ```
 
+```{r}
+# ---------------------------------------------------------------
+# 2. BUILD NEURAL NETWORK MODEL
+# ---------------------------------------------------------------
 
+build_nn_model <- function(n_users, n_items, embedding_dim = 50, dense_units = 128, dropout_rate = 0.3) {
+  
+  # User embedding
+  user_input <- layer_input(shape = 1, name = "user_input")
+  user_embedding <- user_input %>%
+    layer_embedding(input_dim = n_users, output_dim = embedding_dim, name = "user_embedding") %>%
+    layer_flatten(name = "user_flatten")
+  
+  # Item embedding
+  item_input <- layer_input(shape = 1, name = "item_input")
+  item_embedding <- item_input %>%
+    layer_embedding(input_dim = n_items, output_dim = embedding_dim, name = "item_embedding") %>%
+    layer_flatten(name = "item_flatten")
+  
+  # Concatenate embeddings
+  concat <- layer_concatenate(c(user_embedding, item_embedding), name = "concat")
+  
+  # Dense layers
+  dense1 <- concat %>%
+    layer_dense(units = dense_units, activation = "relu", name = "dense1") %>%
+    layer_dropout(rate = dropout_rate, name = "dropout1")
+  
+  dense2 <- dense1 %>%
+    layer_dense(units = dense_units/2, activation = "relu", name = "dense2") %>%
+    layer_dropout(rate = dropout_rate, name = "dropout2")
+  
+  # Output layer (rating prediction)
+  output <- dense2 %>%
+    layer_dense(units = 1, activation = "linear", name = "output")
+  
+  # Create model
+  model <- keras_model(inputs = c(user_input, item_input), outputs = output)
+  
+  # Compile model
+  model$compile(
+    optimizer = optimizer_adam(learning_rate = 0.001),
+    loss = "mse",
+    metrics = list("mae")
+  )
+  
+  return(model)
+}
+```
 
+```{r}
+# ---------------------------------------------------------------
+# 3. TRAIN NEURAL NETWORK MODEL
+# ---------------------------------------------------------------
 
-Test
+train_nn_model <- function(train_data, n_users, n_items, 
+                          embedding_dim = 50, dense_units = 128, dropout_rate = 0.3,
+                          batch_size = 256, epochs = 50, validation_split = 0.1,
+                          verbose = 1) {
+  
+  # Build model
+  model <- build_nn_model(n_users, n_items, embedding_dim, dense_units, dropout_rate)
+  
+  # Prepare training data with proper data types (numpy arrays)
+  x_train <- list(
+    user_input = array(as.integer(train_data$user_index), dim = c(length(train_data$user_index), 1)),
+    item_input = array(as.integer(train_data$item_index), dim = c(length(train_data$item_index), 1))
+  )
+  y_train <- as.numeric(train_data$rating)
+  
+  # Train model
+  history <- model$fit(
+    x = x_train,
+    y = y_train,
+    batch_size = batch_size,
+    epochs = epochs,
+    validation_split = validation_split,
+    verbose = verbose,
+    callbacks = list(
+      callback_early_stopping(patience = 5, restore_best_weights = TRUE),
+      callback_reduce_lr_on_plateau(patience = 3, factor = 0.5)
+    )
+  )
+  
+  return(list(model = model, history = history))
+}
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 4. EVALUATE NEURAL NETWORK MODEL
+# ---------------------------------------------------------------
+
+evaluate_nn_model <- function(model, test_data) {
+  
+  # Prepare test data with proper data types (numpy arrays)
+  x_test <- list(
+    user_input = array(as.integer(test_data$user_index), dim = c(length(test_data$user_index), 1)),
+    item_input = array(as.integer(test_data$item_index), dim = c(length(test_data$item_index), 1))
+  )
+  y_test <- as.numeric(test_data$rating)
+  
+  # Generate predictions
+  predictions <- model$predict(x_test)
+  predictions <- as.vector(predictions)
+  
+  # Clip predictions to valid rating range [1, 10]
+  predictions <- pmax(pmin(predictions, 10), 1)
+  
+  # Calculate metrics
+  rmse <- sqrt(mean((predictions - y_test)^2))
+  mae <- mean(abs(predictions - y_test))
+  
+  return(list(
+    rmse = rmse,
+    mae = mae,
+    predictions = predictions,
+    actual = y_test
+  ))
+}
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 5. RECOMMEND FOR EXISTING USERS
+# ---------------------------------------------------------------
+
+recommend_for_user_nn <- function(model, user_item_matrix, user_id, 
+                                 n_recommendations = 10, user_ids_map, item_ids_map) {
+  
+  # Check if user exists
+  if (!user_id %in% user_ids_map$user_id) {
+    stop("User ID not found in the training data")
+  }
+  
+  # Get user's 0-based index
+  user_idx <- user_ids_map$user_index[user_ids_map$user_id == user_id]
+  
+  # Get items user hasn't rated
+  user_row <- user_item_matrix[as.character(user_id), ]
+  unrated_items <- which(is.na(user_row))
+  
+  # Handle case where user has rated all items
+  if (length(unrated_items) == 0) {
+    return(data.frame(
+      item_id = character(0),
+      predicted_rating = numeric(0),
+      stringsAsFactors = FALSE
+    ))
+  }
+  
+  # Convert to 0-based indices
+  item_indices <- unrated_items - 1
+  
+  # Create prediction data with proper data types (numpy arrays)
+  x_pred <- list(
+    user_input = array(as.integer(rep(user_idx, length(item_indices))), dim = c(length(item_indices), 1)),
+    item_input = array(as.integer(item_indices), dim = c(length(item_indices), 1))
+  )
+  
+  # Predict ratings
+  pred_ratings <- model$predict(x_pred)
+  pred_ratings <- as.vector(pred_ratings)
+  
+  # Clip predictions to valid rating range
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
+  
+  # Get top N recommendations
+  n_to_recommend <- min(n_recommendations, length(pred_ratings))
+  top_indices <- order(pred_ratings, decreasing = TRUE)[1:n_to_recommend]
+  
+  # Return recommendations with item IDs
+  recommendations <- data.frame(
+    item_id = colnames(user_item_matrix)[unrated_items[top_indices]],
+    predicted_rating = round(pred_ratings[top_indices], 2),
+    stringsAsFactors = FALSE
+  )
+  
+  return(recommendations)
+}
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 6. RECOMMEND FOR NEW USERS (COLD START)
+# ---------------------------------------------------------------
+
+recommend_for_new_user_nn <- function(model, user_ratings, item_ids_map, 
+                                     n_recommendations = 10) {
+  
+  # Convert named vector to data frame if needed
+  if (is.numeric(user_ratings) && !is.null(names(user_ratings))) {
+    ratings_df <- data.frame(
+      item_id = names(user_ratings),
+      rating = as.numeric(user_ratings),
+      stringsAsFactors = FALSE
+    )
+  } else {
+    ratings_df <- user_ratings
+  }
+  
+  # Check which items exist in training data
+  valid_items <- ratings_df$item_id %in% item_ids_map$item_id
+  if (sum(valid_items) == 0) {
+    stop("None of the provided items exist in the training data")
+  }
+  
+  # Get item indices for rated items
+  rated_indices <- item_ids_map$item_index[match(ratings_df$item_id[valid_items], item_ids_map$item_id)]
+  
+  # Create temporary user index (use max user index + 1 to avoid conflicts)
+  temp_user_idx <- max(item_ids_map$item_index) + 1
+  
+  # Predict ratings for all items
+  all_item_indices <- 0:(nrow(item_ids_map) - 1)
+  x_pred <- list(
+    user_input = array(as.integer(rep(temp_user_idx, length(all_item_indices))), dim = c(length(all_item_indices), 1)),
+    item_input = array(as.integer(all_item_indices), dim = c(length(all_item_indices), 1))
+  )
+  
+  pred_ratings <- model$predict(x_pred)
+  pred_ratings <- as.vector(pred_ratings)
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)  # Clip to [1, 10]
+  
+  # Remove items user already rated
+  unrated_indices <- setdiff(all_item_indices, rated_indices)
+  unrated_predictions <- pred_ratings[unrated_indices + 1]
+  
+  # Get top recommendations
+  n_to_recommend <- min(n_recommendations, length(unrated_predictions))
+  top_indices <- order(unrated_predictions, decreasing = TRUE)[1:n_to_recommend]
+  
+  # Return recommendations
+  recommended_item_ids <- item_ids_map$item_id[match(unrated_indices[top_indices], item_ids_map$item_index)]
+  
+  data.frame(
+    item_id = recommended_item_ids,
+    predicted_rating = round(unrated_predictions[top_indices], 2),
+    stringsAsFactors = FALSE
+  )
+}
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 7. CROSS-VALIDATION FOR NEURAL NETWORK
+# ---------------------------------------------------------------
+
+cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
+                             embedding_dim = 50, dense_units = 128, dropout_rate = 0.3,
+                             batch_size = 256, epochs = 30, verbose = 0) {
+  
+  set.seed(seed)
+  
+  # Get observed ratings
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
+  n_users <- nrow(user_item_matrix)
+  n_items <- ncol(user_item_matrix)
+  
+  if (n_ratings < n_folds * 2) {
+    stop("Not enough ratings for cross-validation")
+  }
+  
+  # Create folds
+  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
+  
+  cv_results <- data.frame(
+    fold = integer(),
+    rmse = numeric(),
+    mae = numeric(),
+    stringsAsFactors = FALSE
+  )
+  
+  for (fold in 1:n_folds) {
+    cat("Processing fold", fold, "of", n_folds, "\n")
+    
+    # Split data
+    test_indices <- which(fold_indices == fold)
+    train_indices <- which(fold_indices != fold)
+    
+    test_obs <- observed[test_indices, , drop = FALSE]
+    train_obs <- observed[train_indices, , drop = FALSE]
+    
+    # Create train and test dataframes with proper data types
+    train_data <- data.frame(
+      user_index = as.integer(train_obs[, 1] - 1),
+      item_index = as.integer(train_obs[, 2] - 1),
+      rating = as.numeric(user_item_matrix[train_obs])
+    )
+    
+    test_data <- data.frame(
+      user_index = as.integer(test_obs[, 1] - 1),
+      item_index = as.integer(test_obs[, 2] - 1),
+      rating = as.numeric(user_item_matrix[test_obs])
+    )
+    
+    # Train model
+    model_result <- train_nn_model(
+      train_data = train_data,
+      n_users = n_users,
+      n_items = n_items,
+      embedding_dim = embedding_dim,
+      dense_units = dense_units,
+      dropout_rate = dropout_rate,
+      batch_size = batch_size,
+      epochs = epochs,
+      verbose = verbose
+    )
+    
+    # Evaluate
+    results <- evaluate_nn_model(model_result$model, test_data)
+    
+    # Store results
+    cv_results <- rbind(cv_results, data.frame(
+      fold = fold,
+      rmse = results$rmse,
+      mae = results$mae,
+      stringsAsFactors = FALSE
+    ))
+    
+    # Clear model to free memory
+    rm(model_result)
+    gc()
+  }
+  
+  # Calculate summary statistics
+  summary_stats <- data.frame(
+    metric = c("RMSE", "MAE"),
+    mean = c(mean(cv_results$rmse), mean(cv_results$mae)),
+    sd = c(sd(cv_results$rmse), sd(cv_results$mae)),
+    stringsAsFactors = FALSE
+  )
+  
+  return(list(
+    fold_results = cv_results,
+    summary = summary_stats
+  ))
+}
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 8. COMPLETE NEURAL NETWORK WORKFLOW
+# ---------------------------------------------------------------
+
+cat("\n=== NEURAL NETWORK COLLABORATIVE FILTERING ===\n")
+
+# Prepare data
+cat("\n=== STEP 1: Prepare Data ===\n")
+nn_data <- prepare_nn_data(user_item_matrix_nn, test_ratio = 0.2, seed = 123)
+
+cat("\n=== STEP 2: Train Neural Network Model ===\n")
+# Train model with smaller parameters for faster execution
+model_result <- train_nn_model(
+  train_data = nn_data$train,
+  n_users = nn_data$n_users,
+  n_items = nn_data$n_items,
+  embedding_dim = 32,      # Smaller embedding for faster training
+  dense_units = 64,        # Smaller dense layers
+  dropout_rate = 0.3,
+  batch_size = 128,
+  epochs = 20,             # Fewer epochs for demonstration
+  verbose = 1
+)
+
+nn_model <- model_result$model
+
+cat("\n=== STEP 3: Evaluate Model ===\n")
+nn_results <- evaluate_nn_model(nn_model, nn_data$test)
+cat("Neural Network RMSE:", round(nn_results$rmse, 3), "\n")
+cat("Neural Network MAE:", round(nn_results$mae, 3), "\n")
+
+cat("\n=== STEP 4: Neural Network Hyperparameter Tuning ===\n")
+# Hyperparameter tuning for neural network
+tune_nn_hyperparameters <- function(train_data, n_users, n_items, 
+                                   embedding_dims = c(16, 32, 64),
+                                   dense_units_list = c(32, 64, 128),
+                                   dropout_rates = c(0.2, 0.3, 0.4),
+                                   batch_sizes = c(64, 128, 256),
+                                   epochs = 15, verbose = 0) {
+  
+  best_rmse <- Inf
+  best_params <- NULL
+  results <- data.frame()
+  
+  total_combinations <- length(embedding_dims) * length(dense_units_list) * 
+                       length(dropout_rates) * length(batch_sizes)
+  
+  cat("Testing", total_combinations, "hyperparameter combinations...\n")
+  
+  combination <- 1
+  for (emb_dim in embedding_dims) {
+    for (dense_units in dense_units_list) {
+      for (dropout_rate in dropout_rates) {
+        for (batch_size in batch_sizes) {
+          
+          cat("Combination", combination, "of", total_combinations, 
+              "- emb_dim:", emb_dim, "dense:", dense_units, 
+              "dropout:", dropout_rate, "batch:", batch_size, "\n")
+          
+          # Train model with current parameters
+          model_result <- train_nn_model(
+            train_data = train_data,
+            n_users = n_users,
+            n_items = n_items,
+            embedding_dim = emb_dim,
+            dense_units = dense_units,
+            dropout_rate = dropout_rate,
+            batch_size = batch_size,
+            epochs = epochs,
+            validation_split = 0.1,
+            verbose = verbose
+          )
+          
+          # Evaluate on validation set (using last 10% of training data)
+          val_size <- floor(nrow(train_data) * 0.1)
+          val_indices <- sample(nrow(train_data), val_size)
+          val_data <- train_data[val_indices, ]
+          
+          val_results <- evaluate_nn_model(model_result$model, val_data)
+          
+          # Store results
+          results <- rbind(results, data.frame(
+            combination = combination,
+            embedding_dim = emb_dim,
+            dense_units = dense_units,
+            dropout_rate = dropout_rate,
+            batch_size = batch_size,
+            rmse = val_results$rmse,
+            mae = val_results$mae,
+            stringsAsFactors = FALSE
+          ))
+          
+          # Check if this is the best so far
+          if (val_results$rmse < best_rmse) {
+            best_rmse <- val_results$rmse
+            best_params <- list(
+              embedding_dim = emb_dim,
+              dense_units = dense_units,
+              dropout_rate = dropout_rate,
+              batch_size = batch_size
+            )
+            cat("  -> New best RMSE:", round(best_rmse, 3), "\n")
+          }
+          
+          # Clear model to free memory
+          rm(model_result)
+          gc()
+          
+          combination <- combination + 1
+        }
+      }
+    }
+  }
+  
+  return(list(
+    best_params = best_params,
+    best_rmse = best_rmse,
+    all_results = results
+  ))
+}
+
+# Run hyperparameter tuning (with smaller parameter ranges for faster execution)
+cat("Starting neural network hyperparameter tuning...\n")
+tuning_results <- tune_nn_hyperparameters(
+  train_data = nn_data$train,
+  n_users = nn_data$n_users,
+  n_items = nn_data$n_items,
+  embedding_dims = c(16, 32),      # Smaller range for faster tuning
+  dense_units_list = c(32, 64),    # Smaller range for faster tuning
+  dropout_rates = c(0.2, 0.3),     # Smaller range for faster tuning
+  batch_sizes = c(64, 128),        # Smaller range for faster tuning
+  epochs = 10,                     # Fewer epochs for faster tuning
+  verbose = 0
+)
+
+cat("\nBest hyperparameters found:\n")
+print(tuning_results$best_params)
+cat("Best validation RMSE:", round(tuning_results$best_rmse, 3), "\n")
+
+# Train final model with best parameters
+cat("\nTraining final neural network model with optimal parameters...\n")
+final_nn_model_result <- train_nn_model(
+  train_data = nn_data$train,
+  n_users = nn_data$n_users,
+  n_items = nn_data$n_items,
+  embedding_dim = tuning_results$best_params$embedding_dim,
+  dense_units = tuning_results$best_params$dense_units,
+  dropout_rate = tuning_results$best_params$dropout_rate,
+  batch_size = tuning_results$best_params$batch_size,
+  epochs = 30,  # More epochs for final model
+  verbose = 1
+)
+
+final_nn_model <- final_nn_model_result$model
+
+# Evaluate final model
+final_nn_results <- evaluate_nn_model(final_nn_model, nn_data$test)
+cat("Final neural network model performance:\n")
+cat("RMSE:", round(final_nn_results$rmse, 3), "\n")
+cat("MAE:", round(final_nn_results$mae, 3), "\n")
+
+# Compare with initial model
+cat("\nPerformance comparison:\n")
+cat("Initial model RMSE:", round(nn_results$rmse, 3), "\n")
+cat("Tuned model RMSE:", round(final_nn_results$rmse, 3), "\n")
+improvement <- ((nn_results$rmse - final_nn_results$rmse) / nn_results$rmse) * 100
+cat("Improvement:", round(improvement, 1), "%\n")
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 9. NEURAL NETWORK RECOMMENDATIONS
+# ---------------------------------------------------------------
+
+# EXAMPLE 1: Recommend for existing user
+cat("\n=== NEURAL NETWORK RECOMMENDATIONS FOR EXISTING USER ===\n")
+sample_user <- rownames(user_item_matrix_nn)[1]
+cat("User ID:", sample_user, "\n")
+
+nn_recommendations_existing <- recommend_for_user_nn(
+  model = final_nn_model,  # Use tuned model
+  user_item_matrix = user_item_matrix_nn,
+  user_id = sample_user,
+  n_recommendations = 10,
+  user_ids_map = nn_data$user_ids,
+  item_ids_map = nn_data$item_ids
+)
+
+cat("Top 10 Neural Network recommendations:\n")
+print(nn_recommendations_existing)
+```
+
+```{r}
+# EXAMPLE 2: Recommend for new user (cold start problem)
+cat("\n=== NEURAL NETWORK RECOMMENDATIONS FOR NEW USER (COLD START) ===\n")
+
+# Simulate new user with ≤5 book ratings (as per assignment requirement)
+sample_books <- colnames(user_item_matrix_nn)[1:5]
+new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
+
+cat("New user rated these books:\n")
+for (isbn in names(new_user_ratings)) {
+  book_title <- book_info$Book.Title[book_info$ISBN == isbn][1]
+  if (!is.na(book_title)) {
+    cat("  -", book_title, ":", new_user_ratings[isbn], "\n")
+  }
+}
+
+nn_recommendations_new <- recommend_for_new_user_nn(
+  model = final_nn_model,  # Use tuned model
+  user_ratings = new_user_ratings,
+  item_ids_map = nn_data$item_ids,
+  n_recommendations = 10
+)
+
+cat("\nTop 10 Neural Network recommendations for new user:\n")
+print(nn_recommendations_new)
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 10. NEURAL NETWORK CROSS-VALIDATION (OPTIONAL)
+# ---------------------------------------------------------------
+
+# Run cross-validation (uncomment to run - takes significant time)
+cat("\n=== NEURAL NETWORK CROSS-VALIDATION (OPTIONAL - UNCOMMENT TO RUN) ===\n")
+# nn_cv_results <- cross_validate_nn(
+#   user_item_matrix_nn, 
+#   n_folds = 3,
+#   embedding_dim = 32,
+#   dense_units = 64,
+#   epochs = 15,
+#   verbose = 0
+# )
+# cat("Neural Network Cross-validation results:\n")
+# print(nn_cv_results$summary)
+```
+

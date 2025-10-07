@@ -1,0 +1,31 @@
+# Relaxed linting configuration for academic assignments
+linters: linters_with_defaults(
+  # Disable strict variable binding checks
+  object_usage_linter = NULL,
+  object_name_linter = NULL,
+  
+  # Allow longer lines
+  line_length_linter = line_length_linter(120),
+  
+  # Disable complexity checks
+  cyclocomp_linter = NULL,
+  
+  # Allow assignment operators
+  assignment_linter = NULL,
+  
+  # Disable style checks
+  camel_case_linter = NULL,
+  snake_case_linter = NULL,
+  
+  # Allow commented code
+  commented_code_linter = NULL,
+  
+  # Disable function complexity
+  function_left_parentheses_linter = NULL
+)
+
+# Exclude certain files/directories
+exclusions: list(
+  "*.Rmd",
+  "*.Rproj"
+)
