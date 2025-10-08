@@ -33,23 +33,36 @@ Handle new users (assuming they provide ratings for ≤5 books initially)
 
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = FALSE, fig.width = 5, fig.height = 5, 
-                      fig.align = "center", warning = FALSE, message = FALSE, 
-                      fig.show = 'hold', out.width = '70%')
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  fig.width = 8, 
+  fig.height = 6, 
+  fig.align = "center", 
+  warning = FALSE, 
+  message = FALSE, 
+  fig.show = 'hold', 
+  out.width = '80%',
+  dpi = 300
+)
 
-# Relax linting rules for academic work
-options(lintr.linter_file = "none")  # Disable linting entirely
-options(lintr.exclude_linters = c("object_usage_linter", "object_name_linter", 
-                                  "cyclocomp_linter", "line_length_linter"))
-
+# Load required libraries
 library(tidyverse)
 library(patchwork)
 library(caret)
 library(kableExtra)
 library(recosystem)
+library(h2o)
+library(dplyr)
+library(tidyr)
+library(knitr)
+
+# Relax linting rules for academic work
+options(lintr.linter_file = "none")  # Disable linting entirely
+options(lintr.exclude_linters = c("object_usage_linter", "object_name_linter", 
+                                  "cyclocomp_linter", "line_length_linter"))
 ```
 
-```{r}
+```{r data-loading}
 load("book_ratings.Rdata")
 
 # Data structure
@@ -63,6 +76,18 @@ head(user_info) # don't need Age to build recommender, but can include this info
 str(user_info)
 dim(user_info)
 
+# Check for missing values
+missing_values <- data.frame(
+  Dataset = c("Book Info", "Book Ratings", "User Info"),
+  Missing_Values = c(
+    sum(is.na(book_info)),
+    sum(is.na(book_ratings)),
+    sum(is.na(user_info))  # 12098 missing Age values
+  )
+)
+
+kable(missing_values, caption = "Missing Values Summary") %>%
+  kable_styling(latex_options = "HOLD_position")
 
 # print("Missing values in ratings:")
 sum(is.na(book_ratings$Book.Rating))
@@ -71,15 +96,13 @@ length(unique(book_ratings$User.ID))
 print("Unique books:")
 length(unique(book_ratings$ISBN))
 
-
 # Check for missing values 
 colSums(is.na(book_info))
 colSums(is.na(book_ratings))
 colSums(is.na(user_info))  # 12098 missing Age values
-
 ```
 
-```{r}
+```{r data-merging}
 # Merging book_ratings with book_info 
 data <- book_ratings %>%
   left_join(book_info, by = "ISBN")
@@ -95,10 +118,9 @@ table(data$Book.Rating)
 
 length(unique(data$User.ID))
 length(data$User.ID)
-
 ```
 
-```{r}
+```{r user-activity-preliminary}
 # Group and count the number of records per User.ID
 hist_data <- data %>%
   group_by(User.ID) %>%
@@ -113,13 +135,12 @@ ggplot(hist_data, aes(x = User.ID, y = count)) +
   geom_col() +
   labs(x = "User ID", y = "Count", title = "Counts per User ID") +
   theme_minimal()
-
 ```
 
 
 ### Adding Age to dataset
 
-```{r}
+```{r age-analysis}
 # Merge with user_info to include age 
 full_data <- data %>%
   left_join(user_info, by = "User.ID")
@@ -130,19 +151,53 @@ full_data <- full_data %>% filter(full_data$Age < 110)
 ```
 
 
-```{r}
-hist(data$Book.Rating, main = "Distribution of Jester Ratings",
-     col = "yellow", xlab = "Ratings")
+## 3.2 Basic Data Summary
+
+```{r data-summary}
+# Basic summary statistics
+data_summary <- data.frame(
+  Metric = c("Total Users", "Total Books", "Total Ratings", 
+             "Average Rating", "Rating Range"),
+  Value = c(
+    length(unique(data$User.ID)),
+    length(unique(data$ISBN)),
+    nrow(data),
+    round(mean(data$Book.Rating, na.rm = TRUE), 2),
+    paste(min(data$Book.Rating, na.rm = TRUE), "-", max(data$Book.Rating, na.rm = TRUE))
+  )
+)
+
+kable(data_summary, caption = "Dataset Summary") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+# Rating distribution
+rating_dist <- table(data$Book.Rating)
+rating_dist_df <- data.frame(
+  Rating = names(rating_dist),
+  Count = as.numeric(rating_dist),
+  Percentage = round(as.numeric(rating_dist) / sum(rating_dist) * 100, 1)
+)
+
+kable(rating_dist_df, caption = "Rating Distribution") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+# Simple rating histogram
+hist(data$Book.Rating, main = "Distribution of Book Ratings",
+     col = "steelblue", xlab = "Rating", ylab = "Frequency")
 ```
 
 
 
-# SAMPLE DATA FOR TESTING
+## 3.3 Sample Data for Testing
 
-```{r}
+```{r sample-data}
 set.seed(123)
 sample_users <- sample(unique(book_ratings$User.ID), 4000)
 sample_data <- data %>% filter(User.ID %in% sample_users)
+
+cat("Sample data dimensions:", dim(sample_data), "\n")
+cat("Sample users:", length(unique(sample_data$User.ID)), "\n")
+cat("Sample books:", length(unique(sample_data$ISBN)), "\n")
 ```
 
 
