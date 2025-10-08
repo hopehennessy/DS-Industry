@@ -1347,8 +1347,7 @@ recommend_for_user_improved <- function(model, user_item_matrix, user_id,
     return(data.frame(
       item_id = character(0),
       predicted_rating = numeric(0),
-      stringsAsFactors = FALSE
-    ))
+    )
   }
   
   # Convert to 0-based indices
@@ -1375,7 +1374,6 @@ recommend_for_user_improved <- function(model, user_item_matrix, user_id,
   recommendations <- data.frame(
     item_id = colnames(user_item_matrix)[unrated_items[top_indices]],
     predicted_rating = round(pred_ratings[top_indices], 2),
-    stringsAsFactors = FALSE
   )
   
   return(recommendations)
@@ -1391,7 +1389,6 @@ recommend_for_new_user_improved <- function(model, user_ratings, item_ids_map,
     ratings_df <- data.frame(
       item_id = names(user_ratings),
       rating = as.numeric(user_ratings),
-      stringsAsFactors = FALSE
     )
   } else {
     ratings_df <- user_ratings
@@ -1434,7 +1431,6 @@ recommend_for_new_user_improved <- function(model, user_ratings, item_ids_map,
   data.frame(
     item_id = recommended_item_ids,
     predicted_rating = round(unrated_predictions[top_indices], 2),
-    stringsAsFactors = FALSE
   )
 }
 ```
@@ -1519,7 +1515,6 @@ cross_validate_mf <- function(user_item_matrix, n_folds = 5, seed = 123) {
     fold = integer(),
     rmse = numeric(),
     mae = numeric(),
-    stringsAsFactors = FALSE
   )
   
   for (fold in 1:n_folds) {
@@ -1564,16 +1559,14 @@ cross_validate_mf <- function(user_item_matrix, n_folds = 5, seed = 123) {
       fold = fold,
       rmse = results$rmse,
       mae = results$mae,
-      stringsAsFactors = FALSE
-    ))
+    )
   }
   
   # Calculate summary statistics
   summary_stats <- data.frame(
     metric = c("RMSE", "MAE"),
     mean = c(mean(cv_results$rmse), mean(cv_results$mae)),
-    sd = c(sd(cv_results$rmse), sd(cv_results$mae)),
-    stringsAsFactors = FALSE
+    sd = c(sd(cv_results$rmse), sd(cv_results$mae))
   )
   
   return(list(
@@ -1596,8 +1589,7 @@ cat("\n=== CROSS-VALIDATION (OPTIONAL - UNCOMMENT TO RUN) ===\n")
 # Neural network-based collaborative filtering
 
 ```{r}
-library(keras)
-library(tensorflow)
+library(h2o)
 library(dplyr)
 library(tidyr)
 ```
@@ -1605,8 +1597,11 @@ library(tidyr)
 ```{r}
 # ================================================================
 # NEURAL NETWORK-BASED COLLABORATIVE FILTERING
-# Using Keras/TensorFlow for Deep Learning Approach
+# Using H2O for Deep Learning Approach
 # ================================================================
+
+# Initialize H2O cluster
+h2o.init(nthreads = -1, max_mem_size = "4G")
 
 # Load data and create user-item matrix for neural network approach
 load("book_ratings.Rdata")
@@ -1654,10 +1649,10 @@ cat("Sparsity:", round(mean(is.na(user_item_matrix_nn)) * 100, 2), "%\n")
 
 ```{r}
 # ---------------------------------------------------------------
-# 1. PREPARE DATA FOR NEURAL NETWORK
+# 1. PREPARE DATA FOR H2O NEURAL NETWORK
 # ---------------------------------------------------------------
 
-prepare_nn_data <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
+prepare_h2o_data <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
   
   set.seed(seed)
   
@@ -1680,28 +1675,36 @@ prepare_nn_data <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
   test_obs <- observed[test_indices, , drop = FALSE]
   train_obs <- observed[train_indices, , drop = FALSE]
   
-  # Create training data (0-based indexing for neural network) with proper data types
+  # Create training data with user and book IDs as factors for H2O
   train_data <- data.frame(
-    user_index = as.integer(train_obs[, 1] - 1),
-    item_index = as.integer(train_obs[, 2] - 1),
+    user_id = rownames(user_item_matrix)[train_obs[, 1]],
+    book_id = colnames(user_item_matrix)[train_obs[, 2]],
     rating = as.numeric(user_item_matrix[train_obs])
-  )
+    )
   
   test_data <- data.frame(
-    user_index = as.integer(test_obs[, 1] - 1),
-    item_index = as.integer(test_obs[, 2] - 1),
+    user_id = rownames(user_item_matrix)[test_obs[, 1]],
+    book_id = colnames(user_item_matrix)[test_obs[, 2]],
     rating = as.numeric(user_item_matrix[test_obs])
   )
   
-  # Create ID mappings with proper data types
+  # Convert to H2O frames
+  train_h2o <- as.h2o(train_data)
+  test_h2o <- as.h2o(test_data)
+  
+  # Set factor levels for categorical variables
+  train_h2o$user_id <- as.factor(train_h2o$user_id)
+  train_h2o$book_id <- as.factor(train_h2o$book_id)
+  test_h2o$user_id <- as.factor(test_h2o$user_id)
+  test_h2o$book_id <- as.factor(test_h2o$book_id)
+  
+  # Create ID mappings
   user_ids <- data.frame(
-    user_index = as.integer(0:(n_users - 1)),
     user_id = rownames(user_item_matrix)
   )
   
-  item_ids <- data.frame(
-    item_index = as.integer(0:(n_items - 1)),
-    item_id = colnames(user_item_matrix)
+  book_ids <- data.frame(
+    book_id = colnames(user_item_matrix)
   )
   
   cat("Training samples:", nrow(train_data), "\n")
@@ -1709,10 +1712,12 @@ prepare_nn_data <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
   cat("Users:", n_users, "Items:", n_items, "\n")
   
   return(list(
-    train = train_data,
-    test = test_data,
+    train = train_h2o,
+    test = test_h2o,
+    train_df = train_data,
+    test_df = test_data,
     user_ids = user_ids,
-    item_ids = item_ids,
+    book_ids = book_ids,
     n_users = n_users,
     n_items = n_items
   ))
@@ -1721,47 +1726,54 @@ prepare_nn_data <- function(user_item_matrix, test_ratio = 0.2, seed = 123) {
 
 ```{r}
 # ---------------------------------------------------------------
-# 2. BUILD NEURAL NETWORK MODEL
+# 2. TRAIN H2O DEEP LEARNING MODEL
 # ---------------------------------------------------------------
 
-build_nn_model <- function(n_users, n_items, embedding_dim = 50, dense_units = 128, dropout_rate = 0.3) {
+train_h2o_model <- function(train_data, test_data = NULL, 
+                           hidden = c(128, 64), epochs = 50, 
+                           activation = "Rectifier", 
+                           hidden_dropout_ratios = c(0.3, 0.3),
+                           l1 = 0.00001, l2 = 0.00001,
+                           adaptive_rate = TRUE,
+                           rate = 0.001,
+                           rate_annealing = 1e-6,
+                           rho = 0.99,
+                           epsilon = 1e-8,
+                           nfolds = 0,
+                           fold_assignment = "Random",
+                           keep_cross_validation_predictions = FALSE,
+                           seed = 123,
+                           verbose = TRUE) {
   
-  # User embedding
-  user_input <- layer_input(shape = 1, name = "user_input")
-  user_embedding <- user_input %>%
-    layer_embedding(input_dim = n_users, output_dim = embedding_dim, name = "user_embedding") %>%
-    layer_flatten(name = "user_flatten")
+  # Set seed for reproducibility
+  h2o.set.seed(seed)
   
-  # Item embedding
-  item_input <- layer_input(shape = 1, name = "item_input")
-  item_embedding <- item_input %>%
-    layer_embedding(input_dim = n_items, output_dim = embedding_dim, name = "item_embedding") %>%
-    layer_flatten(name = "item_flatten")
+  # Define features and response
+  features <- c("user_id", "book_id")
+  response <- "rating"
   
-  # Concatenate embeddings
-  concat <- layer_concatenate(c(user_embedding, item_embedding), name = "concat")
-  
-  # Dense layers
-  dense1 <- concat %>%
-    layer_dense(units = dense_units, activation = "relu", name = "dense1") %>%
-    layer_dropout(rate = dropout_rate, name = "dropout1")
-  
-  dense2 <- dense1 %>%
-    layer_dense(units = dense_units/2, activation = "relu", name = "dense2") %>%
-    layer_dropout(rate = dropout_rate, name = "dropout2")
-  
-  # Output layer (rating prediction)
-  output <- dense2 %>%
-    layer_dense(units = 1, activation = "linear", name = "output")
-  
-  # Create model
-  model <- keras_model(inputs = c(user_input, item_input), outputs = output)
-  
-  # Compile model
-  model$compile(
-    optimizer = optimizer_adam(learning_rate = 0.001),
-    loss = "mse",
-    metrics = list("mae")
+  # Train H2O Deep Learning model
+  model <- h2o.deeplearning(
+    x = features,
+    y = response,
+    training_frame = train_data,
+    validation_frame = test_data,
+    hidden = hidden,
+    epochs = epochs,
+    activation = activation,
+    hidden_dropout_ratios = hidden_dropout_ratios,
+    l1 = l1,
+    l2 = l2,
+    adaptive_rate = adaptive_rate,
+    rate = rate,
+    rate_annealing = rate_annealing,
+    rho = rho,
+    epsilon = epsilon,
+    nfolds = nfolds,
+    fold_assignment = fold_assignment,
+    keep_cross_validation_predictions = keep_cross_validation_predictions,
+    seed = seed,
+    verbose = verbose
   )
   
   return(model)
@@ -1770,130 +1782,82 @@ build_nn_model <- function(n_users, n_items, embedding_dim = 50, dense_units = 1
 
 ```{r}
 # ---------------------------------------------------------------
-# 3. TRAIN NEURAL NETWORK MODEL
+# 3. EVALUATE H2O MODEL
 # ---------------------------------------------------------------
 
-train_nn_model <- function(train_data, n_users, n_items, 
-                          embedding_dim = 50, dense_units = 128, dropout_rate = 0.3,
-                          batch_size = 256, epochs = 50, validation_split = 0.1,
-                          verbose = 1) {
-  
-  # Build model
-  model <- build_nn_model(n_users, n_items, embedding_dim, dense_units, dropout_rate)
-  
-  # Prepare training data with proper data types (numpy arrays)
-  x_train <- list(
-    user_input = array(as.integer(train_data$user_index), dim = c(length(train_data$user_index), 1)),
-    item_input = array(as.integer(train_data$item_index), dim = c(length(train_data$item_index), 1))
-  )
-  y_train <- as.numeric(train_data$rating)
-  
-  # Train model
-  history <- model$fit(
-    x = x_train,
-    y = y_train,
-    batch_size = batch_size,
-    epochs = epochs,
-    validation_split = validation_split,
-    verbose = verbose,
-    callbacks = list(
-      callback_early_stopping(patience = 5, restore_best_weights = TRUE),
-      callback_reduce_lr_on_plateau(patience = 3, factor = 0.5)
-    )
-  )
-  
-  return(list(model = model, history = history))
-}
-```
-
-```{r}
-# ---------------------------------------------------------------
-# 4. EVALUATE NEURAL NETWORK MODEL
-# ---------------------------------------------------------------
-
-evaluate_nn_model <- function(model, test_data) {
-  
-  # Prepare test data with proper data types (numpy arrays)
-  x_test <- list(
-    user_input = array(as.integer(test_data$user_index), dim = c(length(test_data$user_index), 1)),
-    item_input = array(as.integer(test_data$item_index), dim = c(length(test_data$item_index), 1))
-  )
-  y_test <- as.numeric(test_data$rating)
+evaluate_h2o_model <- function(model, test_data) {
   
   # Generate predictions
-  predictions <- model$predict(x_test)
-  predictions <- as.vector(predictions)
+  predictions <- h2o.predict(model, test_data)
+  predictions_df <- as.data.frame(predictions)
   
-  # Clip predictions to valid rating range [1, 10]
-  predictions <- pmax(pmin(predictions, 10), 1)
+  # Get actual values
+  actual_df <- as.data.frame(test_data$rating)
   
   # Calculate metrics
-  rmse <- sqrt(mean((predictions - y_test)^2))
-  mae <- mean(abs(predictions - y_test))
+  rmse <- sqrt(mean((predictions_df$predict - actual_df$rating)^2))
+  mae <- mean(abs(predictions_df$predict - actual_df$rating))
   
   return(list(
     rmse = rmse,
     mae = mae,
-    predictions = predictions,
-    actual = y_test
+    predictions = predictions_df$predict,
+    actual = actual_df$rating
   ))
 }
 ```
 
 ```{r}
 # ---------------------------------------------------------------
-# 5. RECOMMEND FOR EXISTING USERS
+# 4. RECOMMEND FOR EXISTING USERS (H2O)
 # ---------------------------------------------------------------
 
-recommend_for_user_nn <- function(model, user_item_matrix, user_id, 
-                                 n_recommendations = 10, user_ids_map, item_ids_map) {
+recommend_for_user_h2o <- function(model, user_item_matrix, user_id, 
+                                  n_recommendations = 10, user_ids, book_ids) {
   
   # Check if user exists
-  if (!user_id %in% user_ids_map$user_id) {
+  if (!user_id %in% user_ids$user_id) {
     stop("User ID not found in the training data")
   }
   
-  # Get user's 0-based index
-  user_idx <- user_ids_map$user_index[user_ids_map$user_id == user_id]
-  
-  # Get items user hasn't rated
+  # Get books user hasn't rated
   user_row <- user_item_matrix[as.character(user_id), ]
-  unrated_items <- which(is.na(user_row))
+  unrated_books <- which(is.na(user_row))
   
-  # Handle case where user has rated all items
-  if (length(unrated_items) == 0) {
+  # Handle case where user has rated all books
+  if (length(unrated_books) == 0) {
     return(data.frame(
-      item_id = character(0),
-      predicted_rating = numeric(0),
-      stringsAsFactors = FALSE
-    ))
+      book_id = character(0),
+      predicted_rating = numeric(0)
+    )
   }
   
-  # Convert to 0-based indices
-  item_indices <- unrated_items - 1
-  
-  # Create prediction data with proper data types (numpy arrays)
-  x_pred <- list(
-    user_input = array(as.integer(rep(user_idx, length(item_indices))), dim = c(length(item_indices), 1)),
-    item_input = array(as.integer(item_indices), dim = c(length(item_indices), 1))
+  # Create prediction data
+  pred_data <- data.frame(
+    user_id = rep(user_id, length(unrated_books)),
+    book_id = colnames(user_item_matrix)[unrated_books]
   )
   
+  # Convert to H2O frame
+  pred_h2o <- as.h2o(pred_data)
+  pred_h2o$user_id <- as.factor(pred_h2o$user_id)
+  pred_h2o$book_id <- as.factor(pred_h2o$book_id)
+  
   # Predict ratings
-  pred_ratings <- model$predict(x_pred)
-  pred_ratings <- as.vector(pred_ratings)
+  predictions <- h2o.predict(model, pred_h2o)
+  predictions_df <- as.data.frame(predictions)
   
   # Clip predictions to valid rating range
-  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
+  pred_ratings <- pmax(pmin(predictions_df$predict, 10), 1)
   
   # Get top N recommendations
   n_to_recommend <- min(n_recommendations, length(pred_ratings))
   top_indices <- order(pred_ratings, decreasing = TRUE)[1:n_to_recommend]
   
-  # Return recommendations with item IDs
+  # Return recommendations
   recommendations <- data.frame(
-    item_id = colnames(user_item_matrix)[unrated_items[top_indices]],
-    predicted_rating = round(pred_ratings[top_indices], 2),
-    stringsAsFactors = FALSE
+    book_id = pred_data$book_id[top_indices],
+    predicted_rating = round(pred_ratings[top_indices], 2)
   )
   
   return(recommendations)
@@ -1902,75 +1866,85 @@ recommend_for_user_nn <- function(model, user_item_matrix, user_id,
 
 ```{r}
 # ---------------------------------------------------------------
-# 6. RECOMMEND FOR NEW USERS (COLD START)
+# 5. RECOMMEND FOR NEW USERS (COLD START) - H2O
 # ---------------------------------------------------------------
 
-recommend_for_new_user_nn <- function(model, user_ratings, item_ids_map, 
-                                     n_recommendations = 10) {
+recommend_for_new_user_h2o <- function(model, user_ratings, book_ids, 
+                                      n_recommendations = 10) {
   
   # Convert named vector to data frame if needed
   if (is.numeric(user_ratings) && !is.null(names(user_ratings))) {
     ratings_df <- data.frame(
-      item_id = names(user_ratings),
-      rating = as.numeric(user_ratings),
-      stringsAsFactors = FALSE
+      book_id = names(user_ratings),
+      rating = as.numeric(user_ratings)
     )
   } else {
     ratings_df <- user_ratings
   }
   
-  # Check which items exist in training data
-  valid_items <- ratings_df$item_id %in% item_ids_map$item_id
-  if (sum(valid_items) == 0) {
-    stop("None of the provided items exist in the training data")
+  # Check which books exist in training data
+  valid_books <- ratings_df$book_id %in% book_ids$book_id
+  if (sum(valid_books) == 0) {
+    stop("None of the provided books exist in the training data")
   }
   
-  # Get item indices for rated items
-  rated_indices <- item_ids_map$item_index[match(ratings_df$item_id[valid_items], item_ids_map$item_id)]
+  # Get unrated books
+  rated_books <- ratings_df$book_id[valid_books]
+  unrated_books <- setdiff(book_ids$book_id, rated_books)
   
-  # Create temporary user index (use max user index + 1 to avoid conflicts)
-  temp_user_idx <- max(item_ids_map$item_index) + 1
+  if (length(unrated_books) == 0) {
+    return(data.frame(
+      book_id = character(0),
+      predicted_rating = numeric(0)
+    )
+  }
   
-  # Predict ratings for all items
-  all_item_indices <- 0:(nrow(item_ids_map) - 1)
-  x_pred <- list(
-    user_input = array(as.integer(rep(temp_user_idx, length(all_item_indices))), dim = c(length(all_item_indices), 1)),
-    item_input = array(as.integer(all_item_indices), dim = c(length(all_item_indices), 1))
+  # Create a temporary user ID for predictions
+  temp_user_id <- "temp_user"
+  
+  # Create prediction data for all unrated books
+  pred_data <- data.frame(
+    user_id = rep(temp_user_id, length(unrated_books)),
+    book_id = unrated_books
   )
   
-  pred_ratings <- model$predict(x_pred)
-  pred_ratings <- as.vector(pred_ratings)
-  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)  # Clip to [1, 10]
+  # Convert to H2O frame
+  pred_h2o <- as.h2o(pred_data)
+  pred_h2o$user_id <- as.factor(pred_h2o$user_id)
+  pred_h2o$book_id <- as.factor(pred_h2o$book_id)
   
-  # Remove items user already rated
-  unrated_indices <- setdiff(all_item_indices, rated_indices)
-  unrated_predictions <- pred_ratings[unrated_indices + 1]
+  # Predict ratings
+  predictions <- h2o.predict(model, pred_h2o)
+  predictions_df <- as.data.frame(predictions)
+  
+  # Clip predictions to valid rating range
+  pred_ratings <- pmax(pmin(predictions_df$predict, 10), 1)
   
   # Get top recommendations
-  n_to_recommend <- min(n_recommendations, length(unrated_predictions))
-  top_indices <- order(unrated_predictions, decreasing = TRUE)[1:n_to_recommend]
+  n_to_recommend <- min(n_recommendations, length(pred_ratings))
+  top_indices <- order(pred_ratings, decreasing = TRUE)[1:n_to_recommend]
   
   # Return recommendations
-  recommended_item_ids <- item_ids_map$item_id[match(unrated_indices[top_indices], item_ids_map$item_index)]
-  
   data.frame(
-    item_id = recommended_item_ids,
-    predicted_rating = round(unrated_predictions[top_indices], 2),
-    stringsAsFactors = FALSE
+    book_id = pred_data$book_id[top_indices],
+    predicted_rating = round(pred_ratings[top_indices], 2)
   )
 }
 ```
 
 ```{r}
 # ---------------------------------------------------------------
-# 7. CROSS-VALIDATION FOR NEURAL NETWORK
+# 6. CROSS-VALIDATION FOR H2O MODEL
 # ---------------------------------------------------------------
 
-cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
-                             embedding_dim = 50, dense_units = 128, dropout_rate = 0.3,
-                             batch_size = 256, epochs = 30, verbose = 0) {
+cross_validate_h2o <- function(user_item_matrix, n_folds = 5, seed = 123,
+                              hidden = c(128, 64), epochs = 30, 
+                              activation = "Rectifier",
+                              hidden_dropout_ratios = c(0.3, 0.3),
+                              verbose = 0) {
   
   set.seed(seed)
+  h2o.set.seed(seed)
   
   # Get observed ratings
   observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
@@ -1989,7 +1963,6 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
     fold = integer(),
     rmse = numeric(),
     mae = numeric(),
-    stringsAsFactors = FALSE
   )
   
   for (fold in 1:n_folds) {
@@ -2002,45 +1975,52 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
     test_obs <- observed[test_indices, , drop = FALSE]
     train_obs <- observed[train_indices, , drop = FALSE]
     
-    # Create train and test dataframes with proper data types
+    # Create train and test dataframes
     train_data <- data.frame(
-      user_index = as.integer(train_obs[, 1] - 1),
-      item_index = as.integer(train_obs[, 2] - 1),
+      user_id = rownames(user_item_matrix)[train_obs[, 1]],
+      book_id = colnames(user_item_matrix)[train_obs[, 2]],
       rating = as.numeric(user_item_matrix[train_obs])
     )
     
     test_data <- data.frame(
-      user_index = as.integer(test_obs[, 1] - 1),
-      item_index = as.integer(test_obs[, 2] - 1),
+      user_id = rownames(user_item_matrix)[test_obs[, 1]],
+      book_id = colnames(user_item_matrix)[test_obs[, 2]],
       rating = as.numeric(user_item_matrix[test_obs])
     )
     
+    # Convert to H2O frames
+    train_h2o <- as.h2o(train_data)
+    test_h2o <- as.h2o(test_data)
+    train_h2o$user_id <- as.factor(train_h2o$user_id)
+    train_h2o$book_id <- as.factor(train_h2o$book_id)
+    test_h2o$user_id <- as.factor(test_h2o$user_id)
+    test_h2o$book_id <- as.factor(test_h2o$book_id)
+    
     # Train model
-    model_result <- train_nn_model(
-      train_data = train_data,
-      n_users = n_users,
-      n_items = n_items,
-      embedding_dim = embedding_dim,
-      dense_units = dense_units,
-      dropout_rate = dropout_rate,
-      batch_size = batch_size,
+    model <- train_h2o_model(
+      train_data = train_h2o,
+      test_data = test_h2o,
+      hidden = hidden,
       epochs = epochs,
+      activation = activation,
+      hidden_dropout_ratios = hidden_dropout_ratios,
       verbose = verbose
     )
     
     # Evaluate
-    results <- evaluate_nn_model(model_result$model, test_data)
+    results <- evaluate_h2o_model(model, test_h2o)
     
     # Store results
     cv_results <- rbind(cv_results, data.frame(
       fold = fold,
       rmse = results$rmse,
       mae = results$mae,
-      stringsAsFactors = FALSE
-    ))
+    )
     
     # Clear model to free memory
-    rm(model_result)
+    h2o.rm(model)
+    h2o.rm(train_h2o)
+    h2o.rm(test_h2o)
     gc()
   }
   
@@ -2048,8 +2028,7 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
   summary_stats <- data.frame(
     metric = c("RMSE", "MAE"),
     mean = c(mean(cv_results$rmse), mean(cv_results$mae)),
-    sd = c(sd(cv_results$rmse), sd(cv_results$mae)),
-    stringsAsFactors = FALSE
+    sd = c(sd(cv_results$rmse), sd(cv_results$mae))
   )
   
   return(list(
@@ -2061,200 +2040,167 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
 
 ```{r}
 # ---------------------------------------------------------------
-# 8. COMPLETE NEURAL NETWORK WORKFLOW
+# 7. COMPLETE H2O NEURAL NETWORK WORKFLOW
 # ---------------------------------------------------------------
 
-cat("\n=== NEURAL NETWORK COLLABORATIVE FILTERING ===\n")
+cat("\n=== H2O NEURAL NETWORK COLLABORATIVE FILTERING ===\n")
 
 # Prepare data
 cat("\n=== STEP 1: Prepare Data ===\n")
-nn_data <- prepare_nn_data(user_item_matrix_nn, test_ratio = 0.2, seed = 123)
+h2o_data <- prepare_h2o_data(user_item_matrix_nn, test_ratio = 0.2, seed = 123)
 
-cat("\n=== STEP 2: Train Neural Network Model ===\n")
+cat("\n=== STEP 2: Train H2O Deep Learning Model ===\n")
 # Train model with smaller parameters for faster execution
-model_result <- train_nn_model(
-  train_data = nn_data$train,
-  n_users = nn_data$n_users,
-  n_items = nn_data$n_items,
-  embedding_dim = 32,      # Smaller embedding for faster training
-  dense_units = 64,        # Smaller dense layers
-  dropout_rate = 0.3,
-  batch_size = 128,
-  epochs = 20,             # Fewer epochs for demonstration
-  verbose = 1
+h2o_model <- train_h2o_model(
+  train_data = h2o_data$train,
+  test_data = h2o_data$test,
+  hidden = c(64, 32),           # Smaller hidden layers for faster training
+  epochs = 20,                  # Fewer epochs for demonstration
+  activation = "Rectifier",
+  hidden_dropout_ratios = c(0.3, 0.3),
+  verbose = TRUE
 )
-
-nn_model <- model_result$model
 
 cat("\n=== STEP 3: Evaluate Model ===\n")
-nn_results <- evaluate_nn_model(nn_model, nn_data$test)
-cat("Neural Network RMSE:", round(nn_results$rmse, 3), "\n")
-cat("Neural Network MAE:", round(nn_results$mae, 3), "\n")
+h2o_results <- evaluate_h2o_model(h2o_model, h2o_data$test)
+cat("H2O Neural Network RMSE:", round(h2o_results$rmse, 3), "\n")
+cat("H2O Neural Network MAE:", round(h2o_results$mae, 3), "\n")
 
-cat("\n=== STEP 4: Neural Network Hyperparameter Tuning ===\n")
-# Hyperparameter tuning for neural network
-tune_nn_hyperparameters <- function(train_data, n_users, n_items, 
-                                   embedding_dims = c(16, 32, 64),
-                                   dense_units_list = c(32, 64, 128),
-                                   dropout_rates = c(0.2, 0.3, 0.4),
-                                   batch_sizes = c(64, 128, 256),
-                                   epochs = 15, verbose = 0) {
-  
-  best_rmse <- Inf
-  best_params <- NULL
-  results <- data.frame()
-  
-  total_combinations <- length(embedding_dims) * length(dense_units_list) * 
-                       length(dropout_rates) * length(batch_sizes)
-  
-  cat("Testing", total_combinations, "hyperparameter combinations...\n")
-  
-  combination <- 1
-  for (emb_dim in embedding_dims) {
-    for (dense_units in dense_units_list) {
-      for (dropout_rate in dropout_rates) {
-        for (batch_size in batch_sizes) {
-          
-          cat("Combination", combination, "of", total_combinations, 
-              "- emb_dim:", emb_dim, "dense:", dense_units, 
-              "dropout:", dropout_rate, "batch:", batch_size, "\n")
-          
-          # Train model with current parameters
-          model_result <- train_nn_model(
-            train_data = train_data,
-            n_users = n_users,
-            n_items = n_items,
-            embedding_dim = emb_dim,
-            dense_units = dense_units,
-            dropout_rate = dropout_rate,
-            batch_size = batch_size,
-            epochs = epochs,
-            validation_split = 0.1,
-            verbose = verbose
-          )
-          
-          # Evaluate on validation set (using last 10% of training data)
-          val_size <- floor(nrow(train_data) * 0.1)
-          val_indices <- sample(nrow(train_data), val_size)
-          val_data <- train_data[val_indices, ]
-          
-          val_results <- evaluate_nn_model(model_result$model, val_data)
-          
-          # Store results
-          results <- rbind(results, data.frame(
-            combination = combination,
-            embedding_dim = emb_dim,
-            dense_units = dense_units,
-            dropout_rate = dropout_rate,
-            batch_size = batch_size,
-            rmse = val_results$rmse,
-            mae = val_results$mae,
-            stringsAsFactors = FALSE
-          ))
-          
-          # Check if this is the best so far
-          if (val_results$rmse < best_rmse) {
-            best_rmse <- val_results$rmse
-            best_params <- list(
-              embedding_dim = emb_dim,
-              dense_units = dense_units,
-              dropout_rate = dropout_rate,
-              batch_size = batch_size
-            )
-            cat("  -> New best RMSE:", round(best_rmse, 3), "\n")
-          }
-          
-          # Clear model to free memory
-          rm(model_result)
-          gc()
-          
-          combination <- combination + 1
-        }
-      }
-    }
-  }
-  
-  return(list(
-    best_params = best_params,
-    best_rmse = best_rmse,
-    all_results = results
-  ))
-}
-
-# Run hyperparameter tuning (with smaller parameter ranges for faster execution)
-cat("Starting neural network hyperparameter tuning...\n")
-tuning_results <- tune_nn_hyperparameters(
-  train_data = nn_data$train,
-  n_users = nn_data$n_users,
-  n_items = nn_data$n_items,
-  embedding_dims = c(16, 32),      # Smaller range for faster tuning
-  dense_units_list = c(32, 64),    # Smaller range for faster tuning
-  dropout_rates = c(0.2, 0.3),     # Smaller range for faster tuning
-  batch_sizes = c(64, 128),        # Smaller range for faster tuning
-  epochs = 10,                     # Fewer epochs for faster tuning
-  verbose = 0
-)
-
-cat("\nBest hyperparameters found:\n")
-print(tuning_results$best_params)
-cat("Best validation RMSE:", round(tuning_results$best_rmse, 3), "\n")
-
-# Train final model with best parameters
-cat("\nTraining final neural network model with optimal parameters...\n")
-final_nn_model_result <- train_nn_model(
-  train_data = nn_data$train,
-  n_users = nn_data$n_users,
-  n_items = nn_data$n_items,
-  embedding_dim = tuning_results$best_params$embedding_dim,
-  dense_units = tuning_results$best_params$dense_units,
-  dropout_rate = tuning_results$best_params$dropout_rate,
-  batch_size = tuning_results$best_params$batch_size,
-  epochs = 30,  # More epochs for final model
-  verbose = 1
-)
-
-final_nn_model <- final_nn_model_result$model
-
-# Evaluate final model
-final_nn_results <- evaluate_nn_model(final_nn_model, nn_data$test)
-cat("Final neural network model performance:\n")
-cat("RMSE:", round(final_nn_results$rmse, 3), "\n")
-cat("MAE:", round(final_nn_results$mae, 3), "\n")
-
-# Compare with initial model
-cat("\nPerformance comparison:\n")
-cat("Initial model RMSE:", round(nn_results$rmse, 3), "\n")
-cat("Tuned model RMSE:", round(final_nn_results$rmse, 3), "\n")
-improvement <- ((nn_results$rmse - final_nn_results$rmse) / nn_results$rmse) * 100
-cat("Improvement:", round(improvement, 1), "%\n")
+# Display model summary
+cat("\n=== H2O Model Summary ===\n")
+print(h2o_model)
 ```
 
 ```{r}
 # ---------------------------------------------------------------
-# 9. NEURAL NETWORK RECOMMENDATIONS
+# 8. H2O HYPERPARAMETER TUNING WITH GRID SEARCH
+# ---------------------------------------------------------------
+
+cat("\n=== STEP 4: H2O Hyperparameter Tuning with Grid Search ===\n")
+
+# Parameter search space 
+activation_opt <- c("Rectifier", "RectifierWithDropout", "Tanh", "TanhWithDropout")
+hidden_opt <- list(
+  c(32, 16), c(64, 32), c(32, 32), c(64, 64), 
+  c(16, 16), c(48, 24), c(24, 12), c(32, 16, 8)
+)
+l1_opt <- c(1e-3, 1e-5, 1e-7)
+l2_opt <- c(1e-3, 1e-5, 1e-7)
+epochs_opt <- c(10, 15, 20)
+
+# Hyperparameter grid
+hyper_params <- list(
+  activation = activation_opt,
+  hidden = hidden_opt,
+  l1 = l1_opt,
+  l2 = l2_opt,
+  epochs = epochs_opt
+)
+# Set seed for reproducibility
+set.seed(123)
+
+# Run H2O grid search
+model_grid <- h2o.grid(
+  "deeplearning",
+  grid_id = "nn_grid_book_recommendations",
+  hyper_params = hyper_params,
+  x = c("user_id", "book_id"),
+  y = "rating",
+  seed = 123,
+  reproducible = TRUE,
+  training_frame = h2o_data$train,
+  validation_frame = h2o_data$test,
+  nfolds = 10,  
+  stopping_rounds = 2,
+  stopping_metric = "RMSE",
+  stopping_tolerance = 0.001,
+  adaptive_rate = TRUE
+)
+
+# Get grid results sorted by RMSE (ascending - best first)
+cat("\nGrid search completed. Getting results...\n")
+grid_results <- h2o.getGrid("nn_grid_book_recommendations", sort_by = "rmse", decreasing = FALSE)
+
+# Display top 5 models
+cat("\nTop 5 models from grid search:\n")
+print(grid_results@summary_table[1:min(5, nrow(grid_results@summary_table)), ])
+
+# Get best model
+best_model_id <- grid_results@model_ids[[1]]
+best_model <- h2o.getModel(best_model_id)
+
+cat("\nBest model parameters:\n")
+cat("  Activation:", best_model@allparameters$activation, "\n")
+cat("  Hidden layers:", paste(best_model@allparameters$hidden, collapse = ", "), "\n")
+cat("  L1 regularization:", best_model@allparameters$l1, "\n")
+cat("  L2 regularization:", best_model@allparameters$l2, "\n")
+cat("  Epochs:", best_model@allparameters$epochs, "\n")
+
+# Get cross-validation error
+cv_rmse <- best_model@model$cross_validation_metrics_summary["rmse", ]
+cv_mae <- best_model@model$cross_validation_metrics_summary["mae", ]
+
+cat("\nBest model performance:\n")
+cat("  CV RMSE:", round(cv_rmse$mean, 3), "±", round(cv_rmse$sd, 3), "\n")
+cat("  CV MAE:", round(cv_mae$mean, 3), "±", round(cv_mae$sd, 3), "\n")
+
+# Create results table
+best_nn_results <- data.frame(
+  Activation = best_model@allparameters$activation,
+  Hidden.Layers = paste(best_model@allparameters$hidden, collapse = ", "),
+  L1.Regularisation = best_model@allparameters$l1,
+  L2.Regularisation = best_model@allparameters$l2,
+  Epochs = best_model@allparameters$epochs,
+  CV.RMSE = round(cv_rmse$mean, 3),
+  CV.MAE = round(cv_mae$mean, 3)
+)
+
+cat("\nFinal Neural Network Model Specifications:\n")
+print(best_nn_results)
+
+# Evaluate best model on test set
+final_h2o_results <- evaluate_h2o_model(best_model, h2o_data$test)
+cat("\nBest model test set performance:\n")
+cat("Test RMSE:", round(final_h2o_results$rmse, 3), "\n")
+cat("Test MAE:", round(final_h2o_results$mae, 3), "\n")
+
+# Compare with initial model
+cat("\nPerformance comparison:\n")
+cat("Initial model RMSE:", round(h2o_results$rmse, 3), "\n")
+cat("Grid search best model RMSE:", round(final_h2o_results$rmse, 3), "\n")
+improvement <- ((h2o_results$rmse - final_h2o_results$rmse) / h2o_results$rmse) * 100
+cat("Improvement:", round(improvement, 1), "%\n")
+
+# Set final model for use in recommendations
+final_h2o_model <- best_model
+```
+
+```{r}
+# ---------------------------------------------------------------
+# 9. H2O NEURAL NETWORK RECOMMENDATIONS
 # ---------------------------------------------------------------
 
 # EXAMPLE 1: Recommend for existing user
-cat("\n=== NEURAL NETWORK RECOMMENDATIONS FOR EXISTING USER ===\n")
+cat("\n=== H2O NEURAL NETWORK RECOMMENDATIONS FOR EXISTING USER ===\n")
 sample_user <- rownames(user_item_matrix_nn)[1]
 cat("User ID:", sample_user, "\n")
 
-nn_recommendations_existing <- recommend_for_user_nn(
-  model = final_nn_model,  # Use tuned model
+h2o_recommendations_existing <- recommend_for_user_h2o(
+  model = final_h2o_model,  # Use tuned model
   user_item_matrix = user_item_matrix_nn,
   user_id = sample_user,
   n_recommendations = 10,
-  user_ids_map = nn_data$user_ids,
-  item_ids_map = nn_data$item_ids
+  user_ids = h2o_data$user_ids,
+  book_ids = h2o_data$book_ids
 )
 
-cat("Top 10 Neural Network recommendations:\n")
-print(nn_recommendations_existing)
+cat("Top 10 H2O Neural Network recommendations:\n")
+print(h2o_recommendations_existing)
 ```
 
 ```{r}
 # EXAMPLE 2: Recommend for new user (cold start problem)
-cat("\n=== NEURAL NETWORK RECOMMENDATIONS FOR NEW USER (COLD START) ===\n")
+cat("\n=== H2O NEURAL NETWORK RECOMMENDATIONS FOR NEW USER (COLD START) ===\n")
 
 # Simulate new user with ≤5 book ratings (as per assignment requirement)
 sample_books <- colnames(user_item_matrix_nn)[1:5]
@@ -2268,33 +2214,38 @@ for (isbn in names(new_user_ratings)) {
   }
 }
 
-nn_recommendations_new <- recommend_for_new_user_nn(
-  model = final_nn_model,  # Use tuned model
+h2o_recommendations_new <- recommend_for_new_user_h2o(
+  model = final_h2o_model,  
   user_ratings = new_user_ratings,
-  item_ids_map = nn_data$item_ids,
+  book_ids = h2o_data$book_ids,
   n_recommendations = 10
 )
 
-cat("\nTop 10 Neural Network recommendations for new user:\n")
-print(nn_recommendations_new)
+cat("\nTop 10 H2O Neural Network recommendations for new user:\n")
+print(h2o_recommendations_new)
 ```
 
 ```{r}
 # ---------------------------------------------------------------
-# 10. NEURAL NETWORK CROSS-VALIDATION (OPTIONAL)
+# 10. H2O NEURAL NETWORK CROSS-VALIDATION (OPTIONAL)
 # ---------------------------------------------------------------
 
 # Run cross-validation (uncomment to run - takes significant time)
-cat("\n=== NEURAL NETWORK CROSS-VALIDATION (OPTIONAL - UNCOMMENT TO RUN) ===\n")
-# nn_cv_results <- cross_validate_nn(
+cat("\n=== H2O NEURAL NETWORK CROSS-VALIDATION (OPTIONAL - UNCOMMENT TO RUN) ===\n")
+# h2o_cv_results <- cross_validate_h2o(
 #   user_item_matrix_nn, 
 #   n_folds = 3,
-#   embedding_dim = 32,
-#   dense_units = 64,
+#   hidden = c(64, 32),
 #   epochs = 15,
+#   activation = "Rectifier",
+#   hidden_dropout_ratios = c(0.3, 0.3),
 #   verbose = 0
 # )
-# cat("Neural Network Cross-validation results:\n")
-# print(nn_cv_results$summary)
+# cat("H2O Neural Network Cross-validation results:\n")
+# print(h2o_cv_results$summary)
+
+# Clean up H2O cluster
+cat("\n=== CLEANING UP H2O CLUSTER ===\n")
+h2o.shutdown(prompt = FALSE)
 ```
 
