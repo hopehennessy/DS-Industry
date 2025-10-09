@@ -1,0 +1,145 @@
+---
+title: "LaTeX Installation Test"
+author: "Your Name"
+date: "`r Sys.Date()`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Testing Basic LaTeX
+
+This is a test document to verify that LaTeX is installed correctly.
+
+### Math Equations
+
+Inline math: The famous equation is $E = mc^2$.
+
+Display math:
+$$\int_{0}^{\infty} e^{-x^2} dx = \frac{\sqrt{\pi}}{2}$$
+
+### More Complex Equations
+
+The quadratic formula:
+$$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$
+
+### R Code and Output
+
+```{r}
+# Simple R code
+x <- 1:10
+y <- x^2
+plot(x, y, main = "Simple Plot", pch = 19, col = "blue")
+```
+
+### Tables
+
+```{r}
+knitr::kable(head(mtcars[, 1:5]), caption = "Sample Data from mtcars")
+```
+
+### Greek Letters and Symbols
+
+Some Greek letters: $\alpha, \beta, \gamma, \Delta, \Sigma$
+
+Mathematical symbols: $\leq, \geq, \neq, \approx, \infty$
+
+## Conclusion
+
+If you can see this PDF with:
+
+- Properly formatted equations
+- A plot
+- A table
+- Mathematical symbols
+
+Then **LaTeX is installed correctly!** ✓
+
+
+
+## Method 1: Using knitr::kable() with LaTeX Caption
+
+```{r}
+# Create sample data
+students <- data.frame(
+  Name = c("Alice", "Bob", "Charlie", "Diana"),
+  Math = c(85, 92, 78, 95),
+  Science = c(90, 88, 85, 92),
+  English = c(88, 85, 90, 89)
+)
+
+# Create table with caption
+knitr::kable(students, 
+             caption = "Student Grades by Subject",
+             format = "latex",
+             booktabs = TRUE)
+```
+
+## Method 2: Using kableExtra for Advanced Formatting
+
+```{r message=FALSE}
+library(kableExtra)
+
+knitr::kable(students, 
+             caption = "Enhanced Student Performance Table",
+             booktabs = TRUE) %>%
+  kable_styling(latex_options = c("striped", "hold_position")) %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#4472C4")
+```
+
+## Method 3: Pure LaTeX Table
+
+You can also write pure LaTeX code directly:
+
+\begin{table}[h]
+\centering
+\caption{Sales Data for Q1 2024}
+\label{tab:sales}
+\begin{tabular}{|l|r|r|}
+\hline
+\textbf{Month} & \textbf{Revenue (\$)} & \textbf{Units Sold} \\
+\hline
+January & 45,000 & 150 \\
+February & 52,000 & 175 \\
+March & 48,000 & 160 \\
+\hline
+\textbf{Total} & \textbf{145,000} & \textbf{485} \\
+\hline
+\end{tabular}
+\end{table}
+
+## Method 4: Table with Custom LaTeX Positioning
+
+```{r}
+summary_data <- data.frame(
+  Statistic = c("Mean", "Median", "SD", "Min", "Max"),
+  Value = c(85.5, 87.0, 6.2, 78.0, 95.0)
+)
+
+knitr::kable(summary_data,
+             caption = "\\label{tab:summary}Descriptive Statistics of Test Scores",
+             format = "latex",
+             booktabs = TRUE,
+             align = c('l', 'r'))
+```
+
+Note: The `\label{tab:summary}` allows you to reference this table elsewhere in your document using `\ref{tab:summary}`.
+
+## Referencing Tables
+
+You can reference Table \ref{tab:sales} in your text using LaTeX commands.
+
+## Key LaTeX Table Options
+
+- **caption**: Adds a title to your table
+- **label**: Allows cross-referencing
+- **booktabs = TRUE**: Creates professional-looking tables
+- **align**: Controls column alignment ('l' = left, 'c' = center, 'r' = right)
+- **format = "latex"**: Ensures proper LaTeX output
+
+
