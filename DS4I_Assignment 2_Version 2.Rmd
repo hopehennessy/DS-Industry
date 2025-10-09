@@ -79,6 +79,7 @@ library(h2o)
 library(dplyr)
 library(tidyr)
 library(knitr)
+library(ggplot2)
 
 # Relax linting rules for academic work
 options(lintr.linter_file = "none")  # Disable linting entirely
@@ -2628,109 +2629,6 @@ kable(cv_comparison_results,
 
 ### 5.2.1 Comprehensive Dataset Size Testing
 
-```{r dataset-size-analysis}
-# ================================================================
-# DATASET SIZE IMPACT ANALYSIS - CORE ASSIGNMENT REQUIREMENT
-# ================================================================
-
-analyze_dataset_size_impact <- function(data, book_sizes = c(30, 60, 90, 120, 150), n_folds = 3) {
-  
-  cat("\n=== ANALYZING DATASET SIZE IMPACT ON ACCURACY ===\n")
-  cat("Testing with", length(book_sizes), "different catalog sizes\n")
-  
-  results <- data.frame(
-    Dataset_Size = integer(),
-    Method = character(),
-    RMSE_Mean = numeric(),
-    RMSE_SD = numeric(),
-    stringsAsFactors = FALSE
-  )
-  
-  for (size in book_sizes) {
-    cat("\n--- Testing with", size, "books ---\n")
-    
-    # Filter to most popular books for this size
-    book_counts <- data %>%
-      group_by(ISBN) %>%
-      summarise(num_ratings = n(), .groups = "drop") %>%
-      arrange(desc(num_ratings)) %>%
-      slice_head(n = size)
-    
-    # Create filtered dataset
-    filtered_data <- data %>%
-      filter(ISBN %in% book_counts$ISBN)
-    
-    cat("Filtered dataset:", nrow(filtered_data), "ratings from", 
-        length(unique(filtered_data$User.ID)), "users on", 
-        length(unique(filtered_data$ISBN)), "books\n")
-    
-    # Create user-item matrix for this size
-    size_matrix <- create_user_item_matrix(filtered_data, 
-                                          min_ratings_per_book = 3,
-                                          min_ratings_per_user = 2)
-    
-    if (nrow(size_matrix) < 50 || ncol(size_matrix) < 20) {
-      cat("Skipping size", size, "- insufficient data after filtering\n")
-      next
-    }
-    
-    # Test each method on this dataset size
-    methods <- c("Item-Based CF", "User-Based CF", "Matrix Factorization", "Neural Network")
-    
-    for (method in methods) {
-      cat("Testing", method, "with", size, "books...\n")
-      
-      tryCatch({
-        if (method == "Item-Based CF") {
-          cv_result <- cross_validate_ibcf(size_matrix, n_folds = n_folds, k = 30)
-        } else if (method == "User-Based CF") {
-          cv_result <- cross_validate_ubcf(size_matrix, n_folds = n_folds, k = 30)
-        } else if (method == "Matrix Factorization") {
-          cv_result <- cross_validate_mf(filtered_data, n_folds = n_folds)
-        } else if (method == "Neural Network") {
-          cv_result <- cross_validate_nn(filtered_data, n_folds = n_folds)
-        }
-        
-        # Add results
-        results <- rbind(results, data.frame(
-          Dataset_Size = size,
-          Method = method,
-          RMSE_Mean = mean(cv_result$rmse, na.rm = TRUE),
-          RMSE_SD = sd(cv_result$rmse, na.rm = TRUE),
-          stringsAsFactors = FALSE
-        ))
-        
-      }, error = function(e) {
-        cat("Error testing", method, "with", size, "books:", e$message, "\n")
-      })
-    }
-  }
-  
-  return(results)
-}
-
-# Run the analysis
-cat("\n=== STARTING DATASET SIZE IMPACT ANALYSIS ===\n")
-dataset_size_results <- analyze_dataset_size_impact(data, 
-                                                   book_sizes = c(30, 60, 90, 120, 150),
-                                                   n_folds = 3)
-
-# Display results
-if (nrow(dataset_size_results) > 0) {
-  cat("\n=== DATASET SIZE IMPACT RESULTS ===\n")
-  print(dataset_size_results)
-  
-  # Create formatted table
-  kable(dataset_size_results, 
-        caption = "Impact of Dataset Size on Predictive Accuracy",
-        col.names = c("Books", "Method", "RMSE (Mean)", "RMSE (SD)")) %>%
-    kable_styling(latex_options = "HOLD_position", full_width = FALSE) %>%
-    column_spec(1, bold = TRUE) %>%
-    column_spec(3:4, color = "blue")
-} else {
-  cat("No results obtained from dataset size analysis\n")
-}
-```
 
 ### 5.2.2 Diminishing Returns Analysis
 
@@ -2758,8 +2656,8 @@ if (exists("dataset_size_results") && nrow(dataset_size_results) > 0) {
       # Calculate improvement rates
       improvements <- numeric()
       for (i in 2:nrow(method_data)) {
-        prev_rmse <- method_data$RMSE_Mean[i-1]
-        curr_rmse <- method_data$RMSE_Mean[i]
+        prev_rmse <- method_data$RMSE[i-1]
+        curr_rmse <- method_data$RMSE[i]
         improvement <- ((prev_rmse - curr_rmse) / prev_rmse) * 100
         improvements <- c(improvements, improvement)
         
@@ -2782,13 +2680,10 @@ if (exists("dataset_size_results") && nrow(dataset_size_results) > 0) {
   
   # Create visualization
   if (nrow(dataset_size_results) > 0) {
-    p_size <- ggplot(dataset_size_results, aes(x = Dataset_Size, y = RMSE_Mean, 
+    p_size <- ggplot(dataset_size_results, aes(x = Dataset_Size, y = RMSE, 
                                                color = Method, group = Method)) +
       geom_line(size = 1.2) +
       geom_point(size = 3) +
-      geom_errorbar(aes(ymin = RMSE_Mean - RMSE_SD, 
-                       ymax = RMSE_Mean + RMSE_SD), 
-                   width = 5, alpha = 0.7) +
       labs(title = "Predictive Accuracy vs Dataset Size",
            subtitle = "Impact of Catalog Size on RMSE Performance",
            x = "Number of Books in Dataset",
@@ -2879,7 +2774,7 @@ analyze_dataset_size_impact <- function(data, book_sizes = c(30, 60, 90, 120, 15
 }
 
 # Run dataset size analysis
-dataset_size_results <- analyze_dataset_size_impact(book_ratings, 
+dataset_size_results <- analyze_dataset_size_impact(data, 
                                                    book_sizes = c(30, 60, 90, 120, 150),
                                                    n_folds = 3, optimal_params = optimal_params)
 
