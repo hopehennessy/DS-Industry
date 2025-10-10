@@ -1901,8 +1901,6 @@ kable(best_nn_results,
       caption = "Best Neural Network Model Specifications") %>%
   kable_styling(latex_options = "HOLD_position")
 
-# Clean up H2O cluster
-h2o.shutdown(prompt = FALSE)
 
 ```
 
@@ -2050,7 +2048,8 @@ cross_validate_h2o <- function(user_item_matrix, n_folds = 5, seed = 123, optima
       hidden = optimal_params$min$hidden,
       epochs = optimal_params$min$epochs,
       activation = optimal_params$min$activation,
-      hidden_dropout_ratios = optimal_params$min$hidden_dropout_ratios,
+      l1 = optimal_params$min$l1,
+      l2 = optimal_params$min$l2,
       verbose = FALSE
     )
     
@@ -2099,10 +2098,6 @@ cross_validate_h2o <- function(user_item_matrix, n_folds = 5, seed = 123, optima
 # 6. COMPLETE WORKFLOW
 # ---------------------------------------------------------------
 
-# Prepare Data 
-h2o.init(nthreads = -1, max_mem_size = "4G")
-h2o.no_progress()
-
 prepared <- prepare_h2o_data_improved(user_item_matrix)
 
 # Extract optimal parameters from grid search results
@@ -2111,7 +2106,6 @@ optimal_params <- list(
     hidden = best_model@allparameters$hidden,
     epochs = best_model@allparameters$epochs,
     activation = best_model@allparameters$activation,
-    hidden_dropout_ratios = best_model@allparameters$hidden_dropout_ratios,
     l1 = best_model@allparameters$l1,
     l2 = best_model@allparameters$l2
   )
@@ -2140,7 +2134,6 @@ model <- train_h2o_model_improved(
   hidden = optimal_params$min$hidden,
   epochs = optimal_params$min$epochs,
   activation = optimal_params$min$activation,
-  hidden_dropout_ratios = optimal_params$min$hidden_dropout_ratios,
   l1 = optimal_params$min$l1,
   l2 = optimal_params$min$l2,
   verbose = FALSE
@@ -2153,8 +2146,8 @@ model <- train_h2o_model_improved(
 # 7. RECOMMENDATION FUNCTIONS
 # ---------------------------------------------------------------
 
-# Function to recommend for existing users
-recommend_for_user_improved <- function(model, user_item_matrix, user_id,
+# Function to recommend for existing users (Neural Network)
+recommend_for_user_nn <- function(model, user_item_matrix, user_id,
                                        n_recommendations = 10,
                                        user_ids, book_ids, user_means) {
   
@@ -2210,8 +2203,8 @@ recommend_for_user_improved <- function(model, user_item_matrix, user_id,
   return(recommendations)
 }
 
-# Function to recommend for new users (cold start problem)
-recommend_for_new_user_improved <- function(model, user_ratings, book_ids,
+# Function to recommend for new users (cold start problem - Neural Network)
+recommend_for_new_user_nn <- function(model, user_ratings, book_ids,
                                            n_recommendations = 10, user_means = NULL) {
   
   # Convert named vector to data frame if needed
@@ -2290,7 +2283,7 @@ recommend_for_new_user_improved <- function(model, user_ratings, book_ids,
 # RECOMMENDATIONS FOR EXISTING USER
 sample_user <- rownames(user_item_matrix)[1]
 
-recommendations_existing <- recommend_for_user_improved(
+recommendations_existing <- recommend_for_user_nn(
   model = model,
   user_item_matrix = user_item_matrix,
   user_id = sample_user,
@@ -2334,7 +2327,7 @@ new_user_ratings_df %>%
                 full_width = FALSE)
 
 # Get recommendations for new user
-recommendations_new <- recommend_for_new_user_improved(
+recommendations_new <- recommend_for_new_user_nn(
   model = model,
   user_ratings = new_user_ratings,
   book_ids = prepared$book_ids,
@@ -2366,139 +2359,6 @@ h2o.shutdown(prompt = FALSE)
 # 5. Results and Analysis
 
 ## 5.1 Cross-Validation Performance Analysis
-
-```{r comprehensive-analysis-setup}
-# This script adds the three critical missing components:
-# 1. Cross-validation comparison for all 4 methods
-# 2. Dataset size vs accuracy analysis  
-# 3. Unified performance comparison and conclusions
-
-# NOTE: Make sure you've already run all previous sections and have:
-# - user_item_matrix (from any of your CF sections)
-# - book_info, book_ratings, data loaded
-# - All your functions defined (UBCF, IBCF, MF, NN)
-
-library(tidyverse)
-library(kableExtra)
-library(recosystem)
-library(h2o)
-```
-
-
-
-```{r cross-validation-ubcf}
-# ================================================================
-# PART 2: CROSS-VALIDATION FOR USER-BASED CF
-# ================================================================
-
-cross_validate_ubcf <- function(user_item_matrix, n_folds = 5, k = 30) {
-  
-  set.seed(123)
-  
-  # Get observed ratings
-  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-  n_ratings <- nrow(observed)
-  
-  # Create folds
-  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
-  
-  # Pre-allocate results dataframe
-  cv_results <- data.frame(
-    fold = integer(n_folds),
-    rmse = numeric(n_folds)
-  )
-  
-  cat("Starting", n_folds, "-fold cross-validation for UBCF...\n")
-  
-  for (fold in 1:n_folds) {
-    cat("Fold", fold, "of", n_folds, "... ")
-    
-    # Split data
-    test_indices <- which(fold_indices == fold)
-    test_obs <- observed[test_indices, , drop = FALSE]
-    
-    # Create train matrix
-    train_matrix <- user_item_matrix
-    train_matrix[test_obs] <- NA
-    
-    # Normalize (user-mean)
-    norm_result <- normalize_matrix_user(train_matrix)
-    train_normalized <- norm_result$normalized
-    user_means <- norm_result$means
-    
-    # Compute user similarity
-    user_sim_matrix <- compute_user_similarity_matrix(train_normalized)
-    
-    # Prepare normalized matrix for prediction
-    train_norm_filled <- train_normalized
-    train_norm_filled[is.na(train_norm_filled)] <- 0
-    
-    # Make predictions for test set
-    predictions <- numeric(nrow(test_obs))
-    
-    for (i in 1:nrow(test_obs)) {
-      user_idx <- test_obs[i, 1]
-      item_idx <- test_obs[i, 2]
-      
-      # Get user's rated items in training set
-      rated_items <- which(!is.na(train_matrix[user_idx, ]))
-      
-      if (length(rated_items) == 0) {
-        predictions[i] <- user_means[user_idx]
-        next
-      }
-      
-      # Get similarities and apply k-NN
-      sims <- user_sim_matrix[user_idx, ]
-      sims[is.na(sims)] <- 0
-      
-      if (k < length(sims) && sum(abs(sims) > 0) > 0) {
-        k_actual <- min(k, sum(abs(sims) > 0))
-        top_k_idx <- order(abs(sims), decreasing = TRUE)[1:k_actual]
-        sims_filtered <- rep(0, length(sims))
-        sims_filtered[top_k_idx] <- sims[top_k_idx]
-        sims <- sims_filtered
-      }
-      
-      # Predict
-      if (sum(abs(sims)) > 0) {
-        # Which users rated this item
-        rated_mask <- !is.na(train_matrix[, item_idx])
-        weighted_sum <- sum(sims[rated_mask] * train_norm_filled[rated_mask, item_idx])
-        sum_sims <- sum(abs(sims[rated_mask]))
-        
-        if (sum_sims > 0) {
-          predictions[i] <- (weighted_sum / sum_sims) + user_means[user_idx]
-        } else {
-          predictions[i] <- user_means[user_idx]
-        }
-      } else {
-        predictions[i] <- user_means[user_idx]
-      }
-    }
-    
-    # Clip to valid range
-    predictions <- pmin(pmax(predictions, 1), 10)
-    
-    # Get actual ratings
-    actual <- user_item_matrix[test_obs]
-    
-    # Calculate metrics
-    metrics <- evaluate_predictions(predictions, actual)
-    
-    cv_results[fold, ] <- list(fold, metrics$rmse)
-    
-    cat("RMSE:", round(metrics$rmse, 4), "\n")
-  }
-  
-  # Summary
-  cat("\n=== UBCF Cross-Validation Summary ===\n")
-  cat("Mean RMSE:", round(mean(cv_results$rmse, na.rm = TRUE), 4), "±", 
-      round(sd(cv_results$rmse, na.rm = TRUE), 4), "\n\n")
-  
-  return(cv_results)
-}
-```
 
 ```{r ubcf-ibcf-comparison}
 # ================================================================
