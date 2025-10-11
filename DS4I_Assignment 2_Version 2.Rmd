@@ -69,7 +69,7 @@ knitr::opts_chunk$set(
 
 set.seed(123)
 
-# Load required libraries
+# Load libraries
 library(tidyverse)
 library(patchwork)
 library(caret)
@@ -1879,42 +1879,32 @@ user_item_matrix_nn <- create_user_item_matrix(
   min_ratings_per_book = 5, 
   min_ratings_per_user = 3)
 
-# OPTION: For even faster hyperparameter tuning, use a smaller sample:
-# set.seed(123)
-# sample_users <- sample(rownames(user_item_matrix_nn), min(1000, nrow(user_item_matrix_nn)))
-# user_item_matrix_nn <- user_item_matrix_nn[sample_users, ]
-
-# Prepare data for hyperparameter tuning
+# Prepare data for hyperparameter tuning 
 h2o_data_tuning <- prepare_h2o_data(user_item_matrix_nn)
-
-# SIMPLIFIED Parameter search space for faster tuning
-activation_opt <- c("Rectifier", "Tanh")  # Only test 2 most common activations
-hidden_opt <- list(c(64, 32), c(128, 64))  # Only test 2 proven architectures
-
-l1_opt <- c(1e-5)  # Single value - regularization rarely needs extensive tuning
-l2_opt <- c(1e-5)  # Single value - regularization rarely needs extensive tuning  
-epochs_opt <- c(10)  # Single value - can increase later if needed
-
-# Hyperparameter grid
-hyper_params <- list(
-  activation = activation_opt,
-  hidden = hidden_opt,
-  l1 = l1_opt,
-  l2 = l2_opt,
-  epochs = epochs_opt
-)
-
-# Set seed for reproducibility
-set.seed(123)
 
 # Convert training data to H2O frame for grid search
 train_h2o_tuning <- as.h2o(h2o_data_tuning$train_data)
 train_h2o_tuning$user_id <- as.factor(train_h2o_tuning$user_id)
 train_h2o_tuning$book_id <- as.factor(train_h2o_tuning$book_id)
 
-cat("Starting hyperparameter grid search...\n")
 
-# Run H2O grid search
+# Parameter search g
+activation_opt <- c("Rectifier", "Tanh") 
+hidden_opt <- list(c(64, 32), c(128, 64)) 
+l1_opt <- c(1e-5)  
+l2_opt <- c(1e-5)   
+
+# Hyperparameter grid
+hyper_params <- list(
+  activation = activation_opt,
+  hidden = hidden_opt,
+  l1 = l1_opt,
+  l2 = l2_opt
+)
+
+set.seed(123)
+
+# H2O grid search with cross-validation
 model_grid <- h2o.grid(
   "deeplearning",
   grid_id = "nn_grid_book_recommendations",
@@ -1924,24 +1914,26 @@ model_grid <- h2o.grid(
   seed = 123,
   reproducible = TRUE,
   training_frame = train_h2o_tuning,
-  nfolds = 5,  
-  stopping_rounds = 2,
+  nfolds = 10,  
+  stopping_rounds = 3,
   stopping_metric = "RMSE",
   stopping_tolerance = 0.001,
   adaptive_rate = TRUE
 )
 
-# Get grid results sorted by RMSE (ascending - best first)
+# Get grid results sorted by CV RMSE 
 grid_results <- h2o.getGrid("nn_grid_book_recommendations", sort_by = "rmse", decreasing = FALSE)
 
 # Display top 5 models
-cat("\nTop 5 models from grid search:\n")
-kable(grid_results@summary_table[1:min(5, nrow(grid_results@summary_table)), ], 
-      caption = "Top 5 Neural Network Models from Grid Search") %>%
+top_models_df <- as.data.frame(grid_results@summary_table[1:min(5, nrow(grid_results@summary_table)), ])
+
+kable(top_models_d, 
+      caption = "Top 5 Neural Network Models from Grid Search",
+      digits = 4) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
                 full_width = FALSE)
 
-# Get best model
+# Get best model based on smallest CV error (RMSE)
 best_model_id <- grid_results@model_ids[[1]]
 best_model <- h2o.getModel(best_model_id)
 
@@ -1954,11 +1946,9 @@ best_nn_results <- data.frame(
   Hidden_Layers = paste(best_model@allparameters$hidden, collapse = ", "),
   L1_Regularisation = best_model@allparameters$l1,
   L2_Regularisation = best_model@allparameters$l2,
-  Epochs = best_model@allparameters$epochs,
   CV_RMSE = round(cv_rmse$mean, 3)
 )
 
-cat("\nOptimal hyperparameters:\n")
 kable(best_nn_results, 
       caption = "Best Neural Network Model Specifications") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
@@ -2058,12 +2048,8 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
   set.seed(seed)
   h2o.no_progress()
   
-  # Apply user-mean normalization
-  user_means <- rowMeans(user_item_matrix, na.rm = TRUE)
-  normalized_matrix <- sweep(user_item_matrix, 1, user_means, FUN = "-")
-  
-  # Get observed ratings
-  observed <- which(!is.na(normalized_matrix), arr.ind = TRUE)
+  # Get observed ratings (RAW matrix, no normalization yet)
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
   n_ratings <- nrow(observed)
   
   if (n_ratings < n_folds * 2) {
@@ -2083,21 +2069,29 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
   for (fold in 1:n_folds) {
     cat("Fold", fold, "of", n_folds, "... ")
     
-    # Split data
+    # Split data FIRST
     test_indices <- which(fold_indices == fold)
     train_indices <- which(fold_indices != fold)
     
     test_obs <- observed[test_indices, , drop = FALSE]
     train_obs <- observed[train_indices, , drop = FALSE]
     
-    # Create train dataframe with normalized ratings
+    # Create train matrix
+    train_matrix <- user_item_matrix
+    train_matrix[test_obs] <- NA
+    
+    # NOW normalize only the training data (prevents data leakage)
+    train_user_means <- rowMeans(train_matrix, na.rm = TRUE)
+    train_normalized <- sweep(train_matrix, 1, train_user_means, FUN = "-")
+    
+    # Create training data with normalized ratings
     train_data <- data.frame(
       user_id = rownames(user_item_matrix)[train_obs[, 1]],
       book_id = colnames(user_item_matrix)[train_obs[, 2]],
-      rating = as.numeric(normalized_matrix[train_obs])
+      rating = as.numeric(train_normalized[train_obs])
     )
     
-    # Create test dataframe with original ratings (for proper evaluation)
+    # Create test data with original ratings (for proper evaluation)
     test_data <- data.frame(
       user_id = rownames(user_item_matrix)[test_obs[, 1]],
       book_id = colnames(user_item_matrix)[test_obs[, 2]],
@@ -2124,12 +2118,10 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
       verbose = FALSE
     )
     
-    # Evaluate
-    results <- evaluate_h2o_model(model, test_h2o, user_means)
+    # Evaluate (with proper denormalization using training user means)
+    results <- evaluate_h2o_model(model, test_h2o, train_user_means)
     
     cv_results[fold, ] <- list(fold, results$rmse)
-    
-    cat("RMSE:", round(results$rmse, 4), "\n")
     
     # Clear model to free memory
     h2o.rm(model)
@@ -2137,11 +2129,6 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
     h2o.rm(test_h2o)
     gc()
   }
-  
-  # Summary
-  cat("\n=== Neural Network Cross-Validation Summary ===\n")
-  cat("Mean RMSE:", round(mean(cv_results$rmse, na.rm = TRUE), 4), "±", 
-      round(sd(cv_results$rmse, na.rm = TRUE), 4), "\n\n")
   
   return(cv_results)
 }
@@ -2300,7 +2287,7 @@ recommend_for_new_user_nn <- function(model, new_user_ratings, book_ids,
 # NEURAL NETWORK IMPLEMENTATION
 # ================================================================
 
-# Prepare data for final model
+# Prepare data for final model (using FULL dataset, not the sample)
 prepared <- prepare_h2o_data(user_item_matrix_nn)
 
 cat("Data prepared for Neural Network:\n")
@@ -2448,7 +2435,7 @@ h2o.shutdown(prompt = FALSE)
 # PART 3: COMPREHENSIVE CROSS-VALIDATION COMPARISON
 # ================================================================
 
-run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optimal_params) {
+run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optimal_params, k = 50) {
   
   # Initialize H2O cluster once for all neural network operations
   h2o.init(nthreads = -1, max_mem_size = "4G")
@@ -2458,12 +2445,11 @@ run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optim
   all_results <- data.frame(
     Method = character(4),
     CV_RMSE_Mean = numeric(4),
-    CV_RMSE_SD = numeric(4),
-    Implementation = character(4),
-)
+    CV_RMSE_SD = numeric(4)
+  )
   
   # User-Based CF
-    ubcf_cv <- cross_validate_ubcf(user_item_matrix_ubcf, n_folds = 5, k = 50)
+  ubcf_cv <- cross_validate_ubcf(user_item_matrix, n_folds = n_folds, k = k)
   all_results[2, ] <- list(
     "User-Based CF",
     round(mean(ubcf_cv$rmse), 3),
@@ -2471,7 +2457,7 @@ run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optim
   )
 
   # Item-Based CF
-    ibcf_cv <- cross_validate_ibcf(user_item_matrix_ibcf, n_folds = 5, k = 50)
+  ibcf_cv <- cross_validate_ibcf(user_item_matrix, n_folds = n_folds, k = k)
   all_results[1, ] <- list(
     "Item-Based CF",
     round(mean(ibcf_cv$rmse), 3),
@@ -2479,28 +2465,38 @@ run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optim
   )
   
   # Matrix Factorization
-    mf_cv_results <- cross_validate_mf(
-      user_item_matrix_mf, 
-      n_folds = 5,
-      n_factors = optimal_params$min$dim,
-      learning_rate = optimal_params$min$lrate,
-      costp_l2 = optimal_params$min$costp_l2,
-      costq_l2 = optimal_params$min$costq_l2,
-      n_iter = 50
+  mf_cv_results <- cross_validate_mf(
+    user_item_matrix, 
+    n_folds = n_folds,
+    n_factors = optimal_params$min$dim,
+    learning_rate = optimal_params$min$lrate,
+    costp_l2 = optimal_params$min$costp_l2,
+    costq_l2 = optimal_params$min$costq_l2,
+    n_iter = 50
   )
 
   all_results[3, ] <- list(
     "Matrix Factorization",
-    round(mean(mf_cv$fold_results$rmse), 3),
-    round(sd(mf_cv$fold_results$rmse), 3)
+    round(mean(mf_cv_results$rmse), 3),
+    round(sd(mf_cv_results$rmse), 3)
   )
   
   # Neural Network
-  nn_cv <- cross_validate_h2o(user_item_matrix_nn, n_folds = 5, optimal_params = optimal_params)
+  nn_cv_results <- cross_validate_nn(
+    user_item_matrix, 
+    n_folds = n_folds,
+    hidden = optimal_params$hidden,
+    epochs = optimal_params$epochs,
+    activation = optimal_params$activation,
+    hidden_dropout_ratios = optimal_params$hidden_dropout_ratios,
+    l1 = optimal_params$l1,
+    l2 = optimal_params$l2
+  )
+  
   all_results[4, ] <- list(
     "Neural Network",
-    round(mean(nn_cv$fold_results$rmse), 3),
-    round(sd(nn_cv$fold_results$rmse), 3)
+    round(mean(nn_cv_results$rmse), 3),
+    round(sd(nn_cv_results$rmse), 3)
   )
   
   # Clean up H2O cluster
@@ -2510,8 +2506,21 @@ run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optim
 }
 
 
-# Run the comprehensive comparison
-cv_comparison_results <- run_comprehensive_cv_comparison(user_item_matrix, n_folds = 5, optimal_params = optimal_params)
+# User-itemmatrix for fair comparison across all methods
+
+unified_matrix <- create_user_item_matrix(
+  data,
+  min_ratings_per_book = 5,  
+  min_ratings_per_user = 3   
+)
+
+# Run the comprehensive comparison using the unified matrix
+cv_comparison_results <- run_comprehensive_cv_comparison(
+  user_item_matrix = unified_matrix,  
+  n_folds = 5, 
+  optimal_params = optimal_params,
+  k = 50
+)
 
 # Display results in formatted table
 kable(cv_comparison_results, 
@@ -2653,12 +2662,18 @@ analyze_dataset_size_impact <- function(data, book_sizes = c(30, 60, 90, 120, 15
     
     # Evaluate Matrix Factorization
     mf_cv <- cross_validate_mf(subset_matrix, n_folds = n_folds)
-    results[result_idx, ] <- list(n_books, "Matrix Factorization", round(mean(mf_cv$fold_results$rmse), 3), n_users, n_items, sparsity)
+    results[result_idx, ] <- list(n_books, "Matrix Factorization", round(mean(mf_cv$rmse), 3), n_users, n_items, sparsity)
     result_idx <- result_idx + 1
     
     # Evaluate Neural Network
-    nn_cv <- cross_validate_h2o(subset_matrix, n_folds = n_folds, optimal_params = optimal_params)
-    results[result_idx, ] <- list(n_books, "Neural Network", round(mean(nn_cv$fold_results$rmse), 3), n_users, n_items, sparsity)
+    nn_cv <- cross_validate_nn(subset_matrix, n_folds = n_folds, 
+                               hidden = optimal_params$hidden,
+                               epochs = optimal_params$epochs,
+                               activation = optimal_params$activation,
+                               hidden_dropout_ratios = optimal_params$hidden_dropout_ratios,
+                               l1 = optimal_params$l1,
+                               l2 = optimal_params$l2)
+    results[result_idx, ] <- list(n_books, "Neural Network", round(mean(nn_cv$rmse), 3), n_users, n_items, sparsity)
     result_idx <- result_idx + 1
   }
   
