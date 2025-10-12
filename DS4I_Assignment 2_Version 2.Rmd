@@ -52,7 +52,7 @@ The primary objectives of this research are:
 4. **Dataset Size Impact Analysis**: Examine how the number of available titles affects predictive accuracy
 5. **Ensemble System Development**: Create a unified recommendation framework combining multiple approaches
 
-# 2. Setup and Data Loading
+# Data set up & EDA
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
@@ -89,7 +89,7 @@ options(lintr.exclude_linters = c("object_usage_linter", "object_name_linter",
 
 ```
 
-## 2.1 Data Loading and Initial Exploration
+Data Loading and Initial Exploration
 
 ```{r data-loading}
 load("book_ratings.Rdata")
@@ -117,7 +117,7 @@ missing_values <- data.frame(
 
 ```
 
-## 2.2 Data Integration and Quality Assessment
+Data Integration and Quality Assessment
 
 ```{r data-merging}
 # Merging book_ratings with book_info 
@@ -137,7 +137,7 @@ length(unique(data$User.ID))
 length(data$User.ID)
 ```
 
-## 1.3 User Activity Analysis
+User Activity Analysis
 
 ```{r user-activity-preliminary}
 # Group and count the number of records per User.ID
@@ -152,7 +152,7 @@ max(hist_data$count)
 ```
 
 
-## 1.4 Demographic Data Integration
+Demographic Data Integration
 
 ```{r age-analysis}
 # Merge with user_info to include age 
@@ -165,9 +165,9 @@ full_data <- full_data %>% filter(full_data$Age < 110)
 ```
 
 
-# 2. Exploratory Data Analysis
+Exploratory Data Analysis
 
-## 2.1 Dataset Characteristics
+Dataset Characteristics
 
 ```{r data-summary}
 # Basic summary statistics
@@ -307,7 +307,7 @@ kable(sparsity_summary, caption = "Dataset Sparsity Analysis") %>%
 
 
 
-## 2.2 Sample Data for Experimental Validation
+Sample Data for Experimental Validation
 
 ```{r sample-data}
 set.seed(123)
@@ -360,7 +360,7 @@ length(unique(data$User.ID))
 ```
 
 
-# 3. User-Item Matrix Construction
+# User-Item Matrix Construction
 
 ```{r unified-matrix-creation}
 
@@ -393,13 +393,23 @@ create_user_item_matrix <- function(ratings_data, min_ratings_per_book = 3,
   return(user_item_matrix)
 }
 
+user_item_matrix <- create_user_item_matrix(
+  data,
+  min_ratings_per_book = 5,  
+  min_ratings_per_user = 3   
+)
+
 ```
+
+
+Evaluation function
 
 ```{r}
 # Evaluation metrics function
 evaluate_predictions <- function(pred, actual) {
   rmse <- sqrt(mean((pred - actual)^2, na.rm = TRUE))
-  return(rmse)
+  rmse_sd <- sd(pred - actual, na.rm = TRUE)
+  return(list(rmse = rmse, rmse_sd = rmse_sd))
 }
 
 ```
@@ -646,11 +656,8 @@ recommend_for_new_user_ubcf <- function(new_user_ratings, user_item_matrix,
 # UBCF IMPLEMENTATION
 # ================================================================
 
-# Create user-item matrix
-user_item_matrix_ubcf <- create_user_item_matrix(
-  data, 
-  min_ratings_per_book = 5, 
-  min_ratings_per_user = 2)
+# Use unified matrix for consistency across all methods
+user_item_matrix_ubcf <- user_item_matrix
 
 # Normalize matrix (user-mean)
 normalized_result_ubcf <- normalize_matrix_user(user_item_matrix_ubcf)
@@ -805,9 +812,9 @@ cross_validate_ubcf <- function(user_item_matrix, n_folds = 5, k = 30) {
     actual <- user_item_matrix[test_obs]
     
     # Calculate metrics
-    rmse_fold <- evaluate_predictions(predictions, actual)
+    metrics <- evaluate_predictions(predictions, actual)
     
-    cv_results[fold, ] <- list(fold, rmse_fold)
+    cv_results[fold, ] <- list(fold, metrics$rmse)
     
   }
   
@@ -1087,11 +1094,8 @@ recommend_for_new_user_ibcf <- function(new_user_ratings, user_item_matrix,
 # IBCF IMPLEMENTATION
 # ================================================================
 
-# Create user-item matrix
-user_item_matrix_ibcf <- create_user_item_matrix(
-  data,
-  min_ratings_per_book = 5, 
-  min_ratings_per_user = 2)
+# Use unified matrix for consistency across all methods
+user_item_matrix_ibcf <- user_item_matrix
 
 # Normalize matrix (item-mean)
 normalized_result_ibcf <- normalize_matrix_item(user_item_matrix_ibcf)
@@ -1161,7 +1165,7 @@ new_user_recs_ibcf %>%
 
 ```{r cross-validation-ibcf}
 # ================================================================
-# CROSS-VALIDATION FOR ITEM-BASED CF (FIXED)
+# CROSS-VALIDATION FOR ITEM-BASED CF
 # ================================================================
 
 cross_validate_ibcf <- function(user_item_matrix, n_folds = 5, k = 30) {
@@ -1247,9 +1251,9 @@ cross_validate_ibcf <- function(user_item_matrix, n_folds = 5, k = 30) {
     actual <- user_item_matrix[test_obs]
     
     # Calculate metrics
-    rmse_fold <- evaluate_predictions(predictions, actual)
+    metrics <- evaluate_predictions(predictions, actual)
     
-    cv_results[fold, ] <- list(fold, rmse_fold)
+    cv_results[fold, ] <- list(fold, metrics$rmse)
     
   }
   
@@ -1277,13 +1281,6 @@ cv_results_ibcf %>%
 ## 4.3 Matrix Factorization-Based Collaborative Filtering
 
 Matrix factorization decomposes the user-item rating matrix into lower-dimensional user and item factor matrices. This approach captures latent factors that explain user preferences and item characteristics, enabling more accurate predictions even with sparse data.
-
-```{r matrix-factorization-setup}
-library(recosystem)
-library(dplyr)
-library(caret)
-```
-
 
 ```{r mf-data-preparation}
 # ================================================================
@@ -1398,41 +1395,6 @@ train_reco_model <- function(train_data,
 ```
 
 
-```{r mf-evaluation}
-# ================================================================
-# MODEL EVALUATION
-# ================================================================
-
-evaluate_mf_model <- function(model, test_data) {
-  
-  # Create test data source
-  test_set <- data_memory(
-    user_index = test_data$user_index,
-    item_index = test_data$item_index,
-    rating = test_data$rating,
-    index1 = FALSE
-  )
-  
-  # Generate predictions from trained model
-  predictions <- model$predict(test_set, out_memory())
-  
-  # Clip predictions to valid rating range [1, 10]
-  predictions <- pmax(pmin(predictions, 10), 1)
-  
-  actual_ratings <- test_data$rating
-  
-  # Calculate metrics using dedicated functions
-  rmse_value <- evaluate_predictions(predictions, actual_ratings)
-  
-  return(list(
-    rmse = rmse_value,
-    predictions = predictions,
-    actual = actual_ratings
-  ))
-}
-```
-
-
 ```{r mf-recommendation-functions}
 # ================================================================
 # RECOMMENDATION FUNCTIONS
@@ -1502,16 +1464,16 @@ recommend_for_new_user_mf <- function(model, new_user_ratings, user_item_matrix,
 ```
 
 
+
+
+
 ```{r mf-implementation}
 # ================================================================
 # MATRIX FACTORIZATION IMPLEMENTATION
 # ================================================================
 
-# Create user-item matrix 
-user_item_matrix_mf <- create_user_item_matrix(
-  data,
-  min_ratings_per_book = 5, 
-  min_ratings_per_user = 2)
+# Use unified matrix for consistency across all methods
+user_item_matrix_mf <- user_item_matrix
 
 # Prepare data for recosystem
 prepared <- prepare_recosystem_data(user_item_matrix_mf)
@@ -1542,7 +1504,6 @@ model_mf <- train_reco_model(
 model_mf
 summary(model_mf)
 ```
-
 
 
 
@@ -1640,8 +1601,8 @@ cross_validate_mf_recosystem <- function(user_item_matrix,
     preds <- pmax(pmin(preds, 10), 1)
     
     # Calculate RMSE using evaluate_predictions function
-    rmse_fold <- evaluate_predictions(preds, test_data$rating)
-    cv_results[fold, ] <- c(fold, rmse_fold)
+    metrics <- evaluate_predictions(preds, test_data$rating)
+    cv_results[fold, ] <- c(fold, metrics$rmse)
 
   }
   
@@ -1764,11 +1725,8 @@ prepare_h2o_data <- function(user_item_matrix) {
 # Initialize H2O cluster
 h2o.init(nthreads = -1, max_mem_size = "4G")
 
-# Create user-item matrix (use the same one for consistency)
-user_item_matrix_nn <- create_user_item_matrix(
-  data,
-  min_ratings_per_book = 5, 
-  min_ratings_per_user = 3)
+# Use unified matrix for consistency across all methods
+user_item_matrix_nn <- user_item_matrix
 
 # Prepare data for hyperparameter tuning 
 h2o_data_tuning <- prepare_h2o_data(user_item_matrix_nn)
@@ -1872,30 +1830,6 @@ train_h2o_model <- function(train_data,
 ```
 
 
-```{r nn-evaluation}
-# ================================================================
-# MODEL EVALUATION
-# ================================================================
-
-evaluate_h2o_model <- function(model, test_data, user_means) {
-  
-  predictions <- as.data.frame(h2o.predict(model, test_data))
-  test_data_df <- as.data.frame(test_data)
-  
-  # Denormalize
-  user_ids_for_test <- as.character(test_data_df$user_id)
-  user_means_for_test <- user_means[user_ids_for_test]
-  predictions_df <- predictions
-  predictions_df$predict <- predictions_df$predict + user_means_for_test
-  
-  predictions_df$predict <- pmax(pmin(predictions_df$predict, 10), 1)
-  
-  actual <- test_data_df$rating
-  rmse_value <- evaluate_predictions(predictions_df$predict, actual)
-  
-  return(list(rmse = rmse_value, predictions = predictions_df$predict, actual = actual))
-}
-```
 
 
 ```{r}
@@ -1992,9 +1926,9 @@ recommend_for_user_nn <- function(model, user_item_matrix, user_id,
   )
   
   recommendations <- recommendations %>%
-  left_join(book_info, by = "ISBN") %>%
-      select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  }
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
   return(recommendations)
 }
 
@@ -2097,9 +2031,21 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
     )
     
     # Evaluate (with proper denormalization using training user means)
-    results <- evaluate_h2o_model(model, test_h2o, train_user_means)
+    predictions <- as.data.frame(h2o.predict(model, test_h2o))
+    test_data_df <- as.data.frame(test_h2o)
     
-    cv_results[fold, ] <- list(fold, results$rmse)
+    # Denormalize
+    user_ids_for_test <- as.character(test_data_df$user_id)
+    user_means_for_test <- train_user_means[user_ids_for_test]
+    predictions_df <- predictions
+    predictions_df$predict <- predictions_df$predict + user_means_for_test
+    
+    predictions_df$predict <- pmax(pmin(predictions_df$predict, 10), 1)
+    
+    actual <- test_data_df$rating
+    metrics <- evaluate_predictions(predictions_df$predict, actual)
+    
+    cv_results[fold, ] <- list(fold, metrics$rmse)
     
     # Clear model to free memory
     h2o.rm(model)
@@ -2119,7 +2065,7 @@ cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123,
 # NEURAL NETWORK IMPLEMENTATION
 # ================================================================
 
-# Prepare data for final model (using FULL dataset, not the sample)
+# Prepare data for final model using unified matrix
 prepared <- prepare_h2o_data(user_item_matrix_nn)
 
 cat("Data prepared for Neural Network:\n")
@@ -2337,17 +2283,10 @@ run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optim
 }
 
 
-# User-item matrix for fair comparison across all methods
-
-unified_matrix <- create_user_item_matrix(
-  data,
-  min_ratings_per_book = 5,  
-  min_ratings_per_user = 3   
-)
-################################# Remove probably 
-
-cat("Unified matrix dimensions:", nrow(unified_matrix), "users x", ncol(unified_matrix), "items\n")
-cat("Matrix sparsity:", round(mean(is.na(unified_matrix)) * 100, 2), "%\n\n")
+# Use the unified matrix created earlier for fair comparison across all methods
+cat("Using unified matrix for comprehensive comparison:\n")
+cat("Matrix dimensions:", nrow(user_item_matrix), "users x", ncol(user_item_matrix), "items\n")
+cat("Matrix sparsity:", round(mean(is.na(user_item_matrix)) * 100, 2), "%\n\n")
 
 # Ensure optimal parameters are available for comparison
 # If not already defined from previous chunks, create default values
@@ -2386,7 +2325,7 @@ cat("\n")
 
 # Run the comprehensive comparison using the unified matrix
 cv_comparison_results <- run_comprehensive_cv_comparison(
-  user_item_matrix = unified_matrix,  
+  user_item_matrix = user_item_matrix,  
   n_folds = 5, 
   optimal_params_mf = optimal_params_mf,
   optimal_params_nn = optimal_params_nn,
