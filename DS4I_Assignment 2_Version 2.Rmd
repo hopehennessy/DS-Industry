@@ -1784,6 +1784,10 @@ best_nn_results <- data.frame(
 
 kable(best_nn_results, caption = "Best Neural Network Model Specifications") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+
+save(best_nn_results, file = 'best_nn_results.Rdata')
+load('best_nn_results.Rdata')
 ```
 
 
