@@ -7,6 +7,14 @@ output: pdf_document
 
 \newpage
 
+
+
+##########################################
+
+Zero ratings are implicit, meaning that the book was read, but not rated!!!!!!!!!!!!!!!!!!!
+
+##########################################
+
 # Abstract
 
 This study presents a comprehensive comparative analysis of four collaborative filtering approaches for book recommendation systems using a modified Book-Crossing dataset. We implement item-based collaborative filtering, user-based collaborative filtering, matrix factorization, and neural network-based methods to build an ensemble recommender system. Our analysis includes cross-validation performance evaluation, cold start problem handling, and investigation of dataset size effects on predictive accuracy. The results demonstrate the relative strengths and limitations of each approach, providing insights for practical recommendation system deployment.
@@ -114,7 +122,7 @@ missing_values <- data.frame(
     sum(is.na(user_info))  # 12098 missing Age values
   )
 )
-
+View(book_ratings)
 ```
 
 Data Integration and Quality Assessment
@@ -123,6 +131,8 @@ Data Integration and Quality Assessment
 # Merging book_ratings with book_info 
 data <- book_ratings %>%
   left_join(book_info, by = "ISBN")
+
+  View(data)
 
 summary(data) # can clearly see age has some impossible outliers
 head(data)
