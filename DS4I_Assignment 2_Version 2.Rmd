@@ -376,7 +376,7 @@ length(unique(data$User.ID))
 
 # User-item matrix creation function
 create_user_item_matrix <- function(ratings_data, min_ratings_per_book = 3, 
-                                    min_ratings_per_user = 2) {
+                                    min_ratings_per_user = 3) {
   
   # Convert 0 ratings to NA (unrated)
   ratings_clean <- ratings_data %>%
@@ -2472,3 +2472,9 @@ if (exists("cv_comparison_results")) {
 }
 ```
 
+
+
+# Discussion
+
+Further work- seperat models for implicit and explicit ratings - combine intellegently
+.....
