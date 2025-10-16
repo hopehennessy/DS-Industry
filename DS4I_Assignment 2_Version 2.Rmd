@@ -7,14 +7,6 @@ output: pdf_document
 
 \newpage
 
-
-
-##########################################
-
-Zero ratings are implicit, meaning that the book was read, but not rated!!!!!!!!!!!!!!!!!!!
-
-##########################################
-
 # Abstract
 
 This study presents a comprehensive comparative analysis of four collaborative filtering approaches for book recommendation systems using a modified Book-Crossing dataset. We implement item-based collaborative filtering, user-based collaborative filtering, matrix factorization, and neural network-based methods to build an ensemble recommender system. Our analysis includes cross-validation performance evaluation, cold start problem handling, and investigation of dataset size effects on predictive accuracy. The results demonstrate the relative strengths and limitations of each approach, providing insights for practical recommendation system deployment.
@@ -72,8 +64,7 @@ knitr::opts_chunk$set(
   message = FALSE, 
   fig.show = 'hold', 
   out.width = '70%',
-  dpi = 300
-)
+  dpi = 300)
 
 set.seed(123)
 
@@ -99,10 +90,12 @@ options(lintr.exclude_linters = c("object_usage_linter", "object_name_linter",
 
 Data Loading and Initial Exploration
 
-```{r data-loading}
+
+```{r}
+# Data Loading
 load("book_ratings.Rdata")
 
-# Data structure
+
 head(book_info)
 str(book_info)
 dim(book_info)
@@ -113,27 +106,167 @@ head(user_info) # don't need Age to build recommender, but can include this info
 str(user_info)
 dim(user_info)
 
+
 # Check for missing values
 missing_values <- data.frame(
   Dataset = c("Book Info", "Book Ratings", "User Info"),
   Missing_Values = c(
     sum(is.na(book_info)),
     sum(is.na(book_ratings)),
-    sum(is.na(user_info))  # 12098 missing Age values
+    sum(is.na(user_info))
   )
 )
-View(book_ratings)
+
 ```
 
-Data Integration and Quality Assessment
+## Duplicate Book Detection & Handling
 
-```{r data-merging}
-# Merging book_ratings with book_info 
-data <- book_ratings %>%
+```{r}
+# Initial data merging (but don't use 'data' yet as we need to handle duplicates first)
+initial_data <- book_ratings %>%
   left_join(book_info, by = "ISBN")
 
-  View(data)
+# Duplicate Book Detection & Handling
+# Simple duplicate detection by exact title and author match
+book_info_clean <- book_info %>%
+  mutate(
+    clean_title = (Book.Title %>%
+      tolower() %>%
+      gsub('\\(.*?\\)', '', .) %>%
+      gsub('\\s*:\\s*.*$', '', .) %>%
+      gsub('^(the|a|an)\\s+', '', .) %>%
+      gsub('[^a-z0-9\\s-]', '', .) %>%
+      gsub('\\s+', ' ', .) %>%
+      trimws()),
+    
+    clean_author = (Book.Author %>%
+      tolower() %>%
+      gsub('\\s+jr\\.*$', '', .) %>%
+      gsub('\\s+sr\\.*$', '', .) %>%
+      gsub('\\s+iii$', '', .) %>%
+      gsub('\\s+ii$', '', .) %>%
+      gsub('\\s+', ' ', .) %>%
+      trimws())
+  )
 
+# Find duplicates by exact title and author match
+duplicates <- book_info_clean %>%
+  group_by(clean_title, clean_author) %>%
+  filter(n() > 1) %>%
+  arrange(clean_title, clean_author, ISBN) %>%
+  ungroup()
+
+# FIXED: Improved Merge Ratings Function
+improved_merge_ratings <- function(ratings_data, book_info_data, duplicates_data) {
+  
+  if (nrow(duplicates_data) > 0) {
+    # Create canonical mapping for duplicates
+    duplicate_mapping <- duplicates_data %>%
+      group_by(clean_title, clean_author) %>%
+      arrange(ISBN) %>%
+      mutate(canonical_ISBN = first(ISBN)) %>%
+      ungroup() %>%
+      select(ISBN, canonical_ISBN)
+    
+    # Create complete mapping (non-duplicates map to themselves)
+    all_books_mapping <- book_info_data %>%
+      select(ISBN) %>%
+      left_join(duplicate_mapping, by = 'ISBN') %>%
+      mutate(canonical_ISBN = ifelse(is.na(canonical_ISBN), ISBN, canonical_ISBN))
+    
+    # Apply mapping to ratings data
+    ratings_mapped <- ratings_data %>%
+      left_join(all_books_mapping, by = 'ISBN') %>%
+      mutate(original_ISBN = ISBN,
+             ISBN = canonical_ISBN) %>%
+      select(-canonical_ISBN, -original_ISBN)
+    
+    # Keep highest rating per user-book combination
+    ratings_merged <- ratings_mapped %>%
+      group_by(User.ID, ISBN) %>%
+      slice_max(Book.Rating, n = 1, with_ties = FALSE) %>%
+      ungroup()
+    
+    # Update book_info to keep only canonical ISBNs
+    book_info_updated <- book_info_data %>%
+      left_join(all_books_mapping, by = 'ISBN') %>%
+      filter(ISBN == canonical_ISBN) %>%
+      select(ISBN, Book.Title, Book.Author)
+    
+  } else {
+    ratings_merged <- ratings_data
+    book_info_updated <- book_info_data
+    all_books_mapping <- NULL
+  }
+  
+  return(list(
+    ratings_merged = ratings_merged,
+    book_info_updated = book_info_updated,
+    mapping = all_books_mapping
+  ))
+}
+
+# Apply the merge strategy
+if (nrow(duplicates) > 0) {
+  cat('=== APPLYING DUPLICATE MERGE STRATEGY ===\n')
+  cat('Found', nrow(duplicates), 'duplicate books\n')
+  cat('Strategy: Keep highest rating per user for duplicate books\n\n')
+  
+  # Apply merging
+  merged_result <- improved_merge_ratings(book_ratings, book_info, duplicates)
+  
+  # Statistics
+  cat('MERGE RESULTS:\n')
+  cat('- Original ratings:', nrow(book_ratings), '\n')
+  cat('- Merged ratings:', nrow(merged_result$ratings_merged), '\n')
+  cat('- Ratings removed:', nrow(book_ratings) - nrow(merged_result$ratings_merged), '\n')
+  cat('- Original unique books:', length(unique(book_info$ISBN)), '\n')
+  cat('- Final unique books:', length(unique(merged_result$book_info_updated$ISBN)), '\n\n')
+  
+  # Create final data object with required columns
+  data <- merged_result$ratings_merged %>%
+    left_join(merged_result$book_info_updated, by = "ISBN") %>%
+    select(User.ID, ISBN, Book.Rating, Book.Title, Book.Author)
+  
+  # Update book_info for later use
+  book_info <- merged_result$book_info_updated
+  
+} else {
+  cat('No duplicates found - no merge needed.\n')
+  
+  # Create final data object with required columns
+  data <- book_ratings %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(User.ID, ISBN, Book.Rating, Book.Title, Book.Author)
+}
+
+# Verify final data structure
+cat('\nFINAL DATA STRUCTURE:\n')
+str(data)
+
+cat('\nDATA SUMMARY:\n')
+cat('- Total ratings:', nrow(data), '\n')
+cat('- Unique users:', length(unique(data$User.ID)), '\n')
+cat('- Unique books:', length(unique(data$ISBN)), '\n')
+cat('- Rating range:', paste(range(data$Book.Rating), collapse = ' to '), '\n')
+
+# Check for any remaining duplicates
+remaining_duplicates <- data %>%
+  group_by(User.ID, ISBN) %>%
+  filter(n() > 1)
+
+if (nrow(remaining_duplicates) > 0) {
+  cat('\nWARNING: Still have duplicate user-book pairs!\n')
+  print(remaining_duplicates)
+} else {
+  cat('\nVerification: No duplicate user-book pairs remain.\n')
+}
+
+
+```
+
+
+```{r}
 summary(data) # can clearly see age has some impossible outliers
 head(data)
 dim(data)
@@ -146,6 +279,2607 @@ table(data$Book.Rating)
 length(unique(data$User.ID))
 length(data$User.ID)
 ```
+
+
+
+
+```{r matrix-construction}
+# -------------------------------------------------------------------
+# Count ratings per book
+# -------------------------------------------------------------------
+counts_per_book <- data %>%
+  group_by(ISBN) %>%
+  summarise(num_ratings = n(), .groups = "drop")
+
+# Plot distribution
+ggplot(counts_per_book, aes(x = num_ratings)) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
+  scale_x_continuous(limits = c(0, quantile(counts_per_book$num_ratings, 0.95))) +
+  labs(title = "Distribution of Ratings per Book",
+       x = "Number of Ratings",
+       y = "Count of Books")
+
+
+# -------------------------------------------------------------------
+# Count ratings per user
+# -------------------------------------------------------------------
+counts_per_user <- data %>%
+  group_by(User.ID) %>%
+  summarise(num_ratings = n(), .groups = "drop")
+
+users_per_count <- counts_per_user %>%
+  count(num_ratings, name = "num_users")
+
+# Plot distribution
+ggplot(counts_per_user, aes(x = num_ratings)) +
+  geom_histogram(binwidth = 1, fill = "lightgreen", color = "black") +
+  scale_x_continuous(limits = c(0, quantile(counts_per_user$num_ratings, 0.95))) +
+  labs(title = "Distribution of Ratings per User",
+       x = "Number of Ratings",
+       y = "Count of Users")
+
+# Total unique users
+length(unique(data$User.ID))
+```
+
+
+# User-Item Matrix Construction
+
+```{r unified-matrix-creation}
+
+# User-item matrix creation function with implicit rating handling
+create_user_item_matrix <- function(ratings_data, 
+                                    min_ratings_per_book = 3, 
+                                    min_ratings_per_user = 2,
+                                    implicit_rating = 4,
+                                    implicit_confidence = 0.5) {
+  
+  # CHANGE: Don't convert 0 to NA anymore
+  # Instead, convert 0 to implicit rating value
+  ratings_clean <- ratings_data %>%
+    mutate(
+      # Track original zeros for confidence weighting
+      is_implicit = (Book.Rating == 0),
+      # Store original rating for evaluation purposes
+      original_rating = Book.Rating,
+      # Convert implicit (0) to assumed rating
+      Book.Rating = ifelse(Book.Rating == 0, implicit_rating, Book.Rating),
+      # Add confidence scores
+      confidence = ifelse(is_implicit, implicit_confidence, 1.0)
+    )
+  
+  # Create three matrices: ratings, confidence, and original ratings
+  user_item_matrix <- ratings_clean %>%
+    select(User.ID, ISBN, Book.Rating) %>%
+    pivot_wider(names_from = ISBN, values_from = Book.Rating, values_fill = NA)
+  
+  confidence_matrix <- ratings_clean %>%
+    select(User.ID, ISBN, confidence) %>%
+    pivot_wider(names_from = ISBN, values_from = confidence, values_fill = NA)
+  
+  # Store original ratings for evaluation
+  original_ratings_matrix <- ratings_clean %>%
+    select(User.ID, ISBN, original_rating) %>%
+    pivot_wider(names_from = ISBN, values_from = original_rating, values_fill = NA)
+  
+  # Convert to matrix format
+  user_ids <- user_item_matrix$User.ID
+  user_item_matrix <- as.matrix(user_item_matrix[, -1])
+  confidence_matrix <- as.matrix(confidence_matrix[, -1])
+  original_ratings_matrix <- as.matrix(original_ratings_matrix[, -1])
+  rownames(user_item_matrix) <- user_ids
+  rownames(confidence_matrix) <- user_ids
+  rownames(original_ratings_matrix) <- user_ids
+  
+  # Filter books and users as before
+  books_to_keep <- colSums(!is.na(user_item_matrix)) >= min_ratings_per_book
+  user_item_matrix <- user_item_matrix[, books_to_keep]
+  confidence_matrix <- confidence_matrix[, books_to_keep]
+  original_ratings_matrix <- original_ratings_matrix[, books_to_keep]
+  
+  users_to_keep <- rowSums(!is.na(user_item_matrix)) >= min_ratings_per_user
+  user_item_matrix <- user_item_matrix[users_to_keep, ]
+  confidence_matrix <- confidence_matrix[users_to_keep, ]
+  original_ratings_matrix <- original_ratings_matrix[users_to_keep, ]
+  
+  return(list(
+    ratings = user_item_matrix,
+    confidence = confidence_matrix,
+    original_ratings = original_ratings_matrix
+  ))
+}
+
+```
+
+
+Evaluation function
+
+```{r}
+# Evaluation metrics function
+# Modified evaluation to handle implicit ratings properly
+evaluate_predictions <- function(pred, actual, original_ratings) {
+  # Separate metrics for explicit and implicit
+  is_implicit <- (original_ratings == 0)
+  
+  # RMSE for explicit ratings only
+  explicit_mask <- !is_implicit & !is.na(actual)
+  rmse_explicit <- sqrt(mean((pred[explicit_mask] - actual[explicit_mask])^2, na.rm = TRUE))
+  
+  # Overall RMSE (with imputed values)
+  rmse_overall <- sqrt(mean((pred - actual)^2, na.rm = TRUE))
+  
+  return(list(
+    rmse_explicit = rmse_explicit,
+    rmse_overall = rmse_overall,
+    n_explicit = sum(explicit_mask),
+    n_implicit = sum(is_implicit)
+  ))
+}
+
+```
+
+
+# 4. Collaborative Filtering Methods Implementation
+
+## 4.1 User-Based Collaborative Filtering (UBCF)
+
+
+```{r ubcf-functions}
+
+# User-mean normalization function
+normalize_matrix_user <- function(user_item_matrix) {
+  
+  # Center ratings by subtracting user mean
+  user_means <- rowMeans(user_item_matrix, na.rm = TRUE)
+  user_item_matrix_normalized <- sweep(user_item_matrix, 1, user_means, FUN = "-")
+  
+  return(list(normalized = user_item_matrix_normalized, means = user_means))
+}
+```
+
+
+```{r}
+# Weighted cosine similarity matrix computation for users
+compute_user_similarity_matrix <- function(user_item_matrix_normalized, confidence_matrix) {
+  
+  n_users <- nrow(user_item_matrix_normalized)
+  
+  # Weight the normalized ratings by confidence
+  mat <- user_item_matrix_normalized
+  conf <- confidence_matrix
+  
+  # Replace NA with 0 for computation
+  mat[is.na(mat)] <- 0
+  conf[is.na(conf)] <- 0
+  
+  # Weighted ratings (rating × confidence)
+  weighted_mat <- mat * conf
+  
+  # Weighted dot products (incorporating confidence)
+  numerator <- weighted_mat %*% t(weighted_mat)
+  
+  # Weighted magnitudes
+  magnitudes <- sqrt(rowSums(weighted_mat^2))
+  denominator <- outer(magnitudes, magnitudes)
+  
+  # Cosine similarity
+  user_similarity_matrix <- numerator / denominator
+  user_similarity_matrix[is.nan(user_similarity_matrix)] <- 0
+  diag(user_similarity_matrix) <- 0
+  
+  rownames(user_similarity_matrix) <- rownames(user_item_matrix_normalized)
+  colnames(user_similarity_matrix) <- rownames(user_item_matrix_normalized)
+  
+  return(user_similarity_matrix)
+}
+```
+
+```{r ubcf-recommendation-functions}
+# Recommendation function for existing users (UBCF)
+recommend_for_user_ubcf <- function(target_user, user_item_matrix, 
+                                    user_item_matrix_normalized, 
+                                    confidence_matrix,
+                                    user_sim_matrix,
+                                    user_means, book_info, 
+                                    n_recommendations = 10, 
+                                    k = NULL) {
+  
+  target_user <- as.character(target_user)
+  
+  # Identify truly unrated books (NA values)
+  unrated_books <- colnames(user_item_matrix)[is.na(user_item_matrix[target_user, ])]
+  
+  if (length(unrated_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Get user similarities
+  sims <- user_sim_matrix[target_user, ]
+  sims[is.na(sims) | is.nan(sims)] <- 0
+  
+  # k-NN filtering
+  if (!is.null(k) && k < length(sims)) {
+    non_zero_count <- sum(sims != 0)
+    if (non_zero_count > 0) {
+      k_actual <- min(k, non_zero_count)
+      top_k_users <- names(sort(abs(sims), decreasing = TRUE)[1:k_actual])
+      sims_filtered <- rep(0, length(sims))
+      names(sims_filtered) <- names(sims)
+      sims_filtered[top_k_users] <- sims[top_k_users]
+      sims <- sims_filtered
+    }
+  }
+  
+  if (sum(abs(sims) > 0) == 0) {
+    return(data.frame())
+  }
+  
+  # Weight predictions by confidence
+  mat <- user_item_matrix_normalized
+  conf <- confidence_matrix
+  mat[is.na(mat)] <- 0
+  conf[is.na(conf)] <- 0
+  
+  # Weight ratings by confidence when making predictions
+  weighted_mat <- mat * conf
+  
+  # Predict for unrated books
+  weighted_ratings <- t(weighted_mat[, unrated_books, drop = FALSE]) %*% sims
+  
+  # VECTORIZED: Calculate confidence-weighted similarity sums
+  # Create mask for which users have rated each unrated book
+  rated_mask <- !is.na(confidence_matrix[, unrated_books, drop = FALSE])
+  
+  # Confidence-weighted similarities for normalization
+  conf_weighted_sims <- sweep(conf[, unrated_books, drop = FALSE] * rated_mask, 
+                              1, abs(sims), "*")
+  sum_weighted_sims <- colSums(conf_weighted_sims)
+  sum_weighted_sims[sum_weighted_sims == 0] <- 1
+  
+  # Calculate predictions
+  preds <- weighted_ratings / sum_weighted_sims
+  preds[is.nan(preds)] <- NA
+  preds <- preds + user_means[target_user]
+  
+  # Convert to vector and clip
+  preds <- as.vector(preds)
+  names(preds) <- unrated_books
+  preds <- pmin(pmax(preds, 1), 10)
+  
+  # Get top N recommendations
+  preds_valid <- preds[!is.na(preds)]
+  if (length(preds_valid) == 0) {
+    return(data.frame())
+  }
+  
+  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
+  
+  recommendations <- data.frame(
+    ISBN = names(top_books),
+    Predicted_Rating = as.numeric(top_books),
+    stringsAsFactors = FALSE
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+```
+
+```{r}
+# Improved recommendation function for new users (cold start - UBCF)
+recommend_for_new_user_ubcf <- function(new_user_ratings, 
+                                        user_item_matrix, 
+                                        user_item_matrix_normalized,
+                                        confidence_matrix,
+                                        user_means,
+                                        book_info, 
+                                        n_recommendations = 10, 
+                                        k = NULL) {
+  
+  # Input validation
+  if (length(new_user_ratings) == 0) {
+    return(data.frame())
+  }
+  
+  # Create new user vector aligned with existing matrix
+  new_user_vector <- rep(NA, ncol(user_item_matrix))
+  names(new_user_vector) <- colnames(user_item_matrix)
+  
+  # Check for valid books
+  matched_books <- intersect(names(new_user_ratings), names(new_user_vector))
+  if (length(matched_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Fill in ratings (all explicit with confidence = 1.0)
+  new_user_vector[matched_books] <- new_user_ratings[matched_books]
+  
+  # User-mean normalization
+  new_user_mean <- mean(new_user_vector, na.rm = TRUE)
+  new_user_normalized <- new_user_vector - new_user_mean
+  new_user_normalized[is.na(new_user_normalized)] <- 0
+  
+  # Since new user ratings are all explicit, confidence = 1.0 for rated items
+  new_user_conf <- ifelse(is.na(new_user_vector), 0, 1)
+  
+  # Weight the new user's normalized ratings by confidence
+  new_user_weighted <- new_user_normalized * new_user_conf
+  
+  # Prepare existing users' matrices
+  mat_normalized <- user_item_matrix_normalized
+  mat_normalized[is.na(mat_normalized)] <- 0
+  conf <- confidence_matrix
+  conf[is.na(conf)] <- 0
+  
+  # Weight existing users' ratings by their confidence
+  mat_weighted <- mat_normalized * conf
+  
+  # Compute similarities with all existing users
+  # Using vectorized operations instead of loops
+  existing_magnitudes <- sqrt(rowSums(mat_weighted^2))
+  new_user_magnitude <- sqrt(sum(new_user_weighted^2))
+  
+  # Check for zero magnitude
+  if (new_user_magnitude == 0) {
+    return(data.frame())
+  }
+  
+  # Calculate cosine similarities
+  new_user_sims <- as.vector((mat_weighted %*% new_user_weighted) / 
+                             (existing_magnitudes * new_user_magnitude))
+  
+  # Handle special values
+  new_user_sims[!is.finite(new_user_sims)] <- 0
+  names(new_user_sims) <- rownames(user_item_matrix_normalized)
+  
+  # Apply k-NN filtering if specified
+  if (!is.null(k) && k > 0 && k < length(new_user_sims)) {
+    # Keep only top k most similar users
+    threshold <- sort(abs(new_user_sims), decreasing = TRUE)[min(k, sum(new_user_sims != 0))]
+    new_user_sims[abs(new_user_sims) < threshold] <- 0
+  }
+  
+  # Check if we have similar users
+  if (all(new_user_sims == 0)) {
+    return(data.frame())
+  }
+  
+  # Get unrated books
+  unrated_books <- names(new_user_vector)[is.na(new_user_vector)]
+  
+  if (length(unrated_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Make predictions for unrated books
+  # Vectorized computation for all unrated books at once
+  weighted_ratings <- as.vector(t(mat_weighted[, unrated_books, drop = FALSE]) %*% new_user_sims)
+  
+  # Calculate normalization factors
+  # Only count users who rated each book, weighted by confidence
+  rated_mask <- !is.na(user_item_matrix[, unrated_books, drop = FALSE])
+  conf_for_unrated <- conf[, unrated_books, drop = FALSE] * rated_mask
+  
+  # Sum of confidence-weighted similarities
+  sum_weighted_sims <- as.vector(t(conf_for_unrated) %*% abs(new_user_sims))
+  sum_weighted_sims[sum_weighted_sims == 0] <- 1  # Avoid division by zero
+  
+  # Calculate final predictions
+  preds <- (weighted_ratings / sum_weighted_sims) + new_user_mean
+  
+  # Clip to valid range
+  preds <- pmin(pmax(preds, 1), 10)
+  names(preds) <- unrated_books
+  
+  # Remove NA predictions and get top N
+  preds_valid <- preds[!is.na(preds)]
+  
+  if (length(preds_valid) == 0) {
+    return(data.frame())
+  }
+  
+  # Select top recommendations
+  n_actual <- min(n_recommendations, length(preds_valid))
+  top_indices <- order(preds_valid, decreasing = TRUE)[1:n_actual]
+  
+  # Create output dataframe
+  recommendations <- data.frame(
+    ISBN = names(preds_valid)[top_indices],
+    Predicted_Rating = round(preds_valid[top_indices], 2),
+    stringsAsFactors = FALSE
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+```
+
+
+```{r ubcf-implementation}
+# ================================================================
+# UBCF IMPLEMENTATION
+# ================================================================
+
+
+# Create matrices with implicit feedback handling
+matrix_result <- create_user_item_matrix(
+  data,
+  min_ratings_per_book = 5,  
+  min_ratings_per_user = 3,
+  implicit_rating = 4,
+  implicit_confidence = 0.5
+)
+
+user_item_matrix_ubcf <- matrix_result$ratings
+confidence_matrix_ubcf <- matrix_result$confidence
+original_ratings_matrix_ubcf <- matrix_result$original_ratings
+
+# Normalize matrix (user-mean)
+normalized_result_ubcf <- normalize_matrix_user(user_item_matrix_ubcf)
+user_item_matrix_normalized_ubcf <- normalized_result_ubcf$normalized
+user_means <- normalized_result_ubcf$means
+
+# Compute similarity with confidence weighting
+user_similarity_matrix <- compute_user_similarity_matrix(
+  user_item_matrix_normalized_ubcf, 
+  confidence_matrix_ubcf
+)
+
+# Make recommendations (now confidence-aware)
+sample_user <- rownames(user_item_matrix_ubcf)[3]
+
+recs_ubcf <- recommend_for_user_ubcf(
+  target_user = sample_user,
+  user_item_matrix = user_item_matrix_ubcf,
+  user_item_matrix_normalized = user_item_matrix_normalized_ubcf,
+  confidence_matrix = confidence_matrix_ubcf,  # NEW parameter
+  user_sim_matrix = user_similarity_matrix,
+  user_means = user_means,
+  book_info = book_info,
+  n_recommendations = 10,
+  k = 50
+) 
+
+recs_ubcf %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for Existing User (UBCF)", 
+        digits = 2, align = c("c", "l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+# Recommendations for new user (cold start)
+sample_books <- colnames(user_item_matrix_ubcf)[1:5]
+new_user_ratings <- setNames(c(7, 8, 6, 5, 7), sample_books)
+
+# Display new user's ratings
+new_user_ratings_df <- data.frame(
+  ISBN = names(new_user_ratings),
+  Rating = as.numeric(new_user_ratings)) %>%
+  left_join(book_info, by = "ISBN") %>%
+  select(Book.Title, Book.Author, Rating)
+
+new_user_ratings_df %>%
+  kable(caption = "New User's Initial Ratings", 
+        digits = 0, align = c("l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+new_user_recs <- recommend_for_new_user_ubcf(
+  new_user_ratings = new_user_ratings,
+  user_item_matrix = user_item_matrix_ubcf,
+  user_item_matrix_normalized = user_item_matrix_normalized_ubcf,
+  confidence_matrix = confidence_matrix_ubcf,  # Pass confidence matrix
+  user_means = user_means,
+  book_info = book_info,
+  n_recommendations = 10,
+  k = 50
+)
+
+# Display recommendations
+new_user_recs %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for New User (UBCF with Confidence)", 
+        digits = 2, align = c("c", "l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+```
+
+
+```{r cross-validation-ubcf}
+# =====================================
+# CROSS-VALIDATION FOR USER-BASED CF 
+# =====================================
+
+cross_validate_ubcf <- function(user_item_matrix, confidence_matrix, original_ratings_matrix, n_folds = 5, k = 30) {
+  
+  set.seed(123)
+  
+  # Get observed ratings
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
+  
+  # Create folds
+  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
+  
+  # Pre-allocate results dataframe
+  cv_results <- data.frame(
+    fold = integer(n_folds),
+    rmse = numeric(n_folds))
+  
+
+  for (fold in 1:n_folds) {
+    cat("Fold", fold, "of", n_folds, "... ")
+    
+    # Split data
+    test_indices <- which(fold_indices == fold)
+    test_obs <- observed[test_indices, , drop = FALSE]
+    
+    # Create train matrices (both ratings and confidence)
+    train_matrix <- user_item_matrix
+    train_confidence <- confidence_matrix
+    train_matrix[test_obs] <- NA
+    train_confidence[test_obs] <- NA
+    
+    # Normalize (user-mean)
+    norm_result <- normalize_matrix_user(train_matrix)
+    train_normalized <- norm_result$normalized
+    user_means <- norm_result$means
+    
+    # Compute user similarity with confidence weighting
+    user_sim_matrix <- compute_user_similarity_matrix(train_normalized, train_confidence)
+    
+    # Prepare matrices for prediction
+    train_norm_filled <- train_normalized
+    train_norm_filled[is.na(train_norm_filled)] <- 0
+    train_conf_filled <- train_confidence
+    train_conf_filled[is.na(train_conf_filled)] <- 0
+    
+    # Make predictions for test set
+    predictions <- numeric(nrow(test_obs))
+    
+    for (i in 1:nrow(test_obs)) {
+      user_idx <- test_obs[i, 1]
+      item_idx <- test_obs[i, 2]
+      
+      # Get similarities to all other users
+      sims <- user_sim_matrix[user_idx, ]
+      sims[is.na(sims) | is.nan(sims)] <- 0
+      
+      # Apply k-NN filtering
+      if (k < length(sims) && sum(abs(sims) > 0) > 0) {
+        k_actual <- min(k, sum(abs(sims) > 0))
+        top_k_idx <- order(abs(sims), decreasing = TRUE)[1:k_actual]
+        sims_filtered <- rep(0, length(sims))
+        sims_filtered[top_k_idx] <- sims[top_k_idx]
+        sims <- sims_filtered
+      }
+      
+      # Find which users (among similar ones) rated this item
+      rated_mask <- !is.na(train_matrix[, item_idx])
+      
+      # If no similar user rated this item, use user mean
+      if (sum(abs(sims[rated_mask])) == 0) {
+        predictions[i] <- user_means[user_idx]
+        next
+      }
+      
+      # Confidence-weighted prediction
+      # Weight ratings by confidence
+      weighted_ratings <- train_norm_filled[rated_mask, item_idx] * train_conf_filled[rated_mask, item_idx]
+      
+      # Weight similarities by confidence
+      weighted_sims <- abs(sims[rated_mask]) * train_conf_filled[rated_mask, item_idx]
+      
+      # Weighted average
+      weighted_sum <- sum(sims[rated_mask] * weighted_ratings)
+      sum_weighted_sims <- sum(weighted_sims)
+      
+      if (sum_weighted_sims > 0) {
+        predictions[i] <- (weighted_sum / sum_weighted_sims) + user_means[user_idx]
+      } else {
+        predictions[i] <- user_means[user_idx]
+      }
+    }
+    
+    # Clip to valid range
+    predictions <- pmin(pmax(predictions, 1), 10)
+    
+    # Get actual ratings (converted ratings)
+    actual <- user_item_matrix[test_obs]
+    
+    # Get original ratings for proper evaluation
+    original_ratings <- original_ratings_matrix[test_obs]
+    metrics <- evaluate_predictions(predictions, actual, original_ratings)
+    
+    cv_results[fold, ] <- list(fold, metrics$rmse_explicit)  # Use explicit-only RMSE
+    
+  }
+  
+  return(cv_results)
+}
+
+# Run cross-validation
+cv_results_ubcf <- cross_validate_ubcf(
+  user_item_matrix_ubcf, 
+  confidence_matrix_ubcf,
+  original_ratings_matrix_ubcf,
+  n_folds = 5, 
+  k = 50)
+
+# Display results
+cv_results_ubcf %>%
+  kable(caption = "UBCF Cross-Validation Results", 
+        digits = 4, 
+        col.names = c("Fold", "RMSE"),
+        align = c("c", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+```
+
+
+
+
+## 4.2 Item-Based Collaborative Filtering (IBCF)
+
+Item-based collaborative filtering identifies items with similar rating patterns and recommends items similar to those a user has rated highly. This approach is more stable than user-based methods as item preferences change less frequently than user preferences.
+
+```{r ibcf-functions}
+
+# Item-mean normalization function
+normalize_matrix_item <- function(user_item_matrix) {
+  
+  # Center ratings by subtracting item mean
+  item_means <- colMeans(user_item_matrix, na.rm = TRUE)
+  user_item_matrix_normalized <- sweep(user_item_matrix, 2, item_means, FUN = "-")
+  
+  return(list(normalized = user_item_matrix_normalized, means = item_means))
+}
+
+
+# Weighted cosine similarity matrix computation for items
+compute_item_similarity_matrix <- function(user_item_matrix_normalized, confidence_matrix) {
+  
+  # Replace NA with 0 for matrix operations
+  mat <- user_item_matrix_normalized
+  mat[is.na(mat)] <- 0
+  
+  conf <- confidence_matrix
+  conf[is.na(conf)] <- 0
+  
+  # Transpose to work with items as rows (not users)
+  mat_t <- t(mat)
+  conf_t <- t(conf)
+  
+  # Weight the ratings by confidence
+  weighted_mat_t <- mat_t * conf_t
+  
+  # Weighted dot products (numerator)
+  numerator <- weighted_mat_t %*% t(weighted_mat_t)
+  
+  # Weighted magnitudes (denominator)
+  magnitudes <- sqrt(rowSums(weighted_mat_t^2))
+  denominator <- outer(magnitudes, magnitudes)
+  
+  # Cosine similarity calculation
+  item_similarity_matrix <- numerator / denominator
+  
+  # Replace NaN values with 0
+  item_similarity_matrix[is.nan(item_similarity_matrix)] <- 0
+  
+  # Set self-similarity to 0
+  diag(item_similarity_matrix) <- 0
+
+  rownames(item_similarity_matrix) <- colnames(user_item_matrix_normalized)
+  colnames(item_similarity_matrix) <- colnames(user_item_matrix_normalized)
+  
+  return(item_similarity_matrix)
+}
+```
+
+
+```{r ibcf-recommendation-functions}
+# Recommendation function for existing users (IBCF) - Final Optimized
+recommend_for_user_ibcf <- function(target_user, user_item_matrix,
+                                    user_item_matrix_normalized, 
+                                    confidence_matrix,
+                                    item_sim_matrix,
+                                    item_means, book_info, 
+                                    n_recommendations = 10,
+                                    k = NULL) {
+  
+  target_user <- as.character(target_user)
+  
+  # Identify truly unrated books (NA values)
+  unrated_books <- colnames(user_item_matrix)[is.na(user_item_matrix[target_user, ])]
+  
+  if (length(unrated_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Get item similarities for unrated books
+  item_sims <- item_sim_matrix[unrated_books, , drop = FALSE]
+  item_sims[is.na(item_sims) | is.nan(item_sims)] <- 0
+  
+  # k-NN filtering
+  if (!is.null(k) && k < ncol(item_sims)) {
+    for (i in 1:nrow(item_sims)) {
+      sims <- item_sims[i, ]
+      non_zero_count <- sum(sims != 0)
+      if (non_zero_count > 0) {
+        k_actual <- min(k, non_zero_count)
+        top_k_items <- names(sort(abs(sims), decreasing = TRUE)[1:k_actual])
+        sims_filtered <- rep(0, length(sims))
+        names(sims_filtered) <- names(sims)
+        sims_filtered[top_k_items] <- sims[top_k_items]
+        item_sims[i, ] <- sims_filtered
+      }
+    }
+  }
+  
+  if (sum(abs(item_sims) > 0) == 0) {
+    return(data.frame())
+  }
+  
+  # Weight predictions by confidence
+  mat <- user_item_matrix_normalized
+  conf <- confidence_matrix
+  mat[is.na(mat)] <- 0
+  conf[is.na(conf)] <- 0
+  
+  # Weight ratings by confidence when making predictions
+  weighted_mat <- mat * conf
+  
+  # Predict for unrated books
+  weighted_ratings <- item_sims %*% weighted_mat[target_user, ]
+  
+  # VECTORIZED: Calculate confidence-weighted similarity sums
+  rated_mask <- !is.na(user_item_matrix[target_user, ])
+  rated_item_mask <- matrix(rated_mask, nrow = nrow(item_sims), 
+                            ncol = length(rated_mask), byrow = TRUE)
+  
+  # Confidence-weighted similarities for normalization
+  conf_weighted_sims <- rated_item_mask * abs(item_sims) * conf[target_user, ]
+  sum_weighted_sims <- rowSums(conf_weighted_sims)
+  sum_weighted_sims[sum_weighted_sims == 0] <- 1
+  
+  # Calculate predictions
+  preds <- weighted_ratings / sum_weighted_sims
+  preds[is.nan(preds)] <- NA
+  preds <- preds + item_means[unrated_books]
+  
+  # Convert to vector and clip
+  preds <- as.vector(preds)
+  names(preds) <- unrated_books
+  preds <- pmin(pmax(preds, 1), 10)
+  
+  # Get top N recommendations
+  preds_valid <- preds[!is.na(preds)]
+  if (length(preds_valid) == 0) {
+    return(data.frame())
+  }
+  
+  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
+  
+  recommendations <- data.frame(
+    ISBN = names(top_books),
+    Predicted_Rating = as.numeric(top_books),
+    stringsAsFactors = FALSE
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+```
+
+
+```{r}
+# Recommendation function for new users (cold start - IBCF) - Final Optimized
+recommend_for_new_user_ibcf <- function(new_user_ratings, 
+                                        user_item_matrix,
+                                        user_item_matrix_normalized, 
+                                        confidence_matrix,
+                                        item_means,
+                                        item_sim_matrix, 
+                                        book_info,
+                                        n_recommendations = 10, 
+                                        k = NULL) {
+  
+  # Input validation
+  if (length(new_user_ratings) == 0) {
+    return(data.frame())
+  }
+  
+  # Create new user vector aligned with existing matrix
+  new_user_vector <- rep(NA, ncol(user_item_matrix))
+  names(new_user_vector) <- colnames(user_item_matrix)
+  
+  # Check for valid books
+  matched_books <- intersect(names(new_user_ratings), names(new_user_vector))
+  if (length(matched_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Fill in ratings (all explicit with confidence = 1.0)
+  new_user_vector[matched_books] <- new_user_ratings[matched_books]
+  
+  # Item-mean normalization
+  new_user_normalized <- new_user_vector - item_means
+  new_user_normalized[is.na(new_user_normalized)] <- 0
+  
+  # Since new user ratings are all explicit, confidence = 1.0 for rated items
+  new_user_conf <- ifelse(is.na(new_user_vector), 0, 1)
+  
+  # Weight the new user's normalized ratings by confidence
+  new_user_weighted <- new_user_normalized * new_user_conf
+  
+  # Get unrated books
+  unrated_books <- names(new_user_vector)[is.na(new_user_vector)]
+  
+  if (length(unrated_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Get item similarities for unrated books
+  item_sims <- item_sim_matrix[unrated_books, , drop = FALSE]
+  item_sims[is.na(item_sims) | is.nan(item_sims)] <- 0
+  
+  # Apply k-NN filtering if specified
+  if (!is.null(k) && k < ncol(item_sims)) {
+    for (i in 1:nrow(item_sims)) {
+      sims <- item_sims[i, ]
+      non_zero_count <- sum(sims != 0)
+      if (non_zero_count > 0) {
+        k_actual <- min(k, non_zero_count)
+        top_k_items <- names(sort(abs(sims), decreasing = TRUE)[1:k_actual])
+        sims_filtered <- rep(0, length(sims))
+        names(sims_filtered) <- names(sims)
+        sims_filtered[top_k_items] <- sims[top_k_items]
+        item_sims[i, ] <- sims_filtered
+      }
+    }
+  }
+  
+  # Check if we have similar items
+  if (sum(abs(item_sims) > 0) == 0) {
+    return(data.frame())
+  }
+  
+  # Make predictions for unrated books (vectorized)
+  weighted_ratings <- item_sims %*% new_user_weighted
+  
+  # Calculate normalization factors
+  rated_mask <- !is.na(new_user_vector)
+  rated_item_mask <- matrix(rated_mask, nrow = nrow(item_sims), 
+                            ncol = length(rated_mask), byrow = TRUE)
+  
+  # Confidence-weighted similarities
+  conf_weighted_sims <- rated_item_mask * abs(item_sims) * new_user_conf
+  sum_weighted_sims <- rowSums(conf_weighted_sims)
+  sum_weighted_sims[sum_weighted_sims == 0] <- 1
+  
+  # Calculate final predictions
+  preds <- weighted_ratings / sum_weighted_sims
+  preds[is.nan(preds)] <- NA
+  preds <- preds + item_means[unrated_books]
+  
+  # Convert to vector and clip
+  preds <- as.vector(preds)
+  names(preds) <- unrated_books
+  preds <- pmin(pmax(preds, 1), 10)
+  
+  # Remove NA predictions and get top N
+  preds_valid <- preds[!is.na(preds)]
+  
+  if (length(preds_valid) == 0) {
+    return(data.frame())
+  }
+  
+  # Select top recommendations
+  n_actual <- min(n_recommendations, length(preds_valid))
+  top_indices <- order(preds_valid, decreasing = TRUE)[1:n_actual]
+  
+  # Create output dataframe
+  recommendations <- data.frame(
+    ISBN = names(preds_valid)[top_indices],
+    Predicted_Rating = round(preds_valid[top_indices], 2),
+    stringsAsFactors = FALSE
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+```
+
+
+```{r ibcf-implementation}
+# ================================================================
+# IBCF IMPLEMENTATION - OPTIMIZED VERSION
+# ================================================================
+# Key optimizations: Vectorized predictions, enhanced confidence weighting, 
+# improved k-NN filtering, robust cross-validation
+# ================================================================
+
+# Create matrices with implicit feedback handling for IBCF
+matrix_result_ibcf <- create_user_item_matrix(
+  data,
+  min_ratings_per_book = 5,  
+  min_ratings_per_user = 3,
+  implicit_rating = 4,        # Treat implicit as "slightly below neutral"
+  implicit_confidence = 0.5    # Lower confidence for imputed values
+)
+
+user_item_matrix_ibcf <- matrix_result_ibcf$ratings
+confidence_matrix_ibcf <- matrix_result_ibcf$confidence
+original_ratings_matrix_ibcf <- matrix_result_ibcf$original_ratings
+
+# Normalize matrix (item-mean)
+normalized_result_ibcf <- normalize_matrix_item(user_item_matrix_ibcf)
+user_item_matrix_normalized_ibcf <- normalized_result_ibcf$normalized
+item_means <- normalized_result_ibcf$means
+
+# Compute item-item similarity matrix with confidence weighting
+item_similarity_matrix <- compute_item_similarity_matrix(
+  user_item_matrix_normalized_ibcf, 
+  confidence_matrix_ibcf
+)
+
+# Recommendations for existing user
+sample_user <- rownames(user_item_matrix_ibcf)[3]
+
+recs_ibcf <- recommend_for_user_ibcf(
+  target_user = sample_user,
+  user_item_matrix = user_item_matrix_ibcf,
+  user_item_matrix_normalized = user_item_matrix_normalized_ibcf,
+  confidence_matrix = confidence_matrix_ibcf,
+  item_sim_matrix = item_similarity_matrix,
+  item_means = item_means,
+  book_info = book_info,
+  n_recommendations = 10,
+  k = 50)
+
+recs_ibcf %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for Existing User (IBCF)", 
+        digits = 2, align = c("c", "l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+# Recommendations for new user (cold start)
+sample_books <- colnames(user_item_matrix_ibcf)[1:5]
+new_user_ratings <- setNames(c(7, 8, 6, 5, 7), sample_books)
+
+# Display new user's ratings
+new_user_ratings_df <- data.frame(
+  ISBN = names(new_user_ratings),
+  Rating = as.numeric(new_user_ratings)) %>%
+  left_join(book_info, by = "ISBN") %>%
+  select(Book.Title, Book.Author, Rating)
+
+new_user_ratings_df %>%
+  kable(caption = "New User's Initial Ratings", 
+        digits = 0, align = c("l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+new_user_recs_ibcf <- recommend_for_new_user_ibcf(
+  new_user_ratings = new_user_ratings,
+  user_item_matrix = user_item_matrix_ibcf,
+  user_item_matrix_normalized = user_item_matrix_normalized_ibcf,
+  confidence_matrix = confidence_matrix_ibcf,
+  item_means = item_means,
+  item_sim_matrix = item_similarity_matrix,
+  book_info = book_info,
+  n_recommendations = 10,
+  k = 50)  
+
+new_user_recs_ibcf %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for New User (IBCF)", 
+        digits = 2, align = c("c", "l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+```
+
+
+```{r cross-validation-ibcf}
+# ================================================================
+# CROSS-VALIDATION FOR ITEM-BASED CF
+# ================================================================
+
+cross_validate_ibcf <- function(user_item_matrix, confidence_matrix, original_ratings_matrix, n_folds = 5, k = 30) {
+  
+  set.seed(123)
+  
+  # Get observed ratings
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
+  
+  # Create folds
+  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
+  
+  # Pre-allocate results dataframe
+  cv_results <- data.frame(
+    fold = integer(n_folds),
+    rmse = numeric(n_folds))
+  
+  for (fold in 1:n_folds) {
+    cat("Fold", fold, "of", n_folds, "... ")
+    
+    # Split data
+    test_indices <- which(fold_indices == fold)
+    test_obs <- observed[test_indices, , drop = FALSE]
+    
+    # Create train matrices (both ratings and confidence)
+    train_matrix <- user_item_matrix
+    train_confidence <- confidence_matrix
+    train_matrix[test_obs] <- NA
+    train_confidence[test_obs] <- NA
+    
+    # Normalize (item-mean)
+    norm_result <- normalize_matrix_item(train_matrix)
+    train_normalized <- norm_result$normalized
+    item_means <- norm_result$means
+    
+    # Compute item similarity with confidence weighting
+    item_sim_matrix <- compute_item_similarity_matrix(train_normalized, train_confidence)
+    
+    # Prepare matrices for prediction
+    train_norm_filled <- train_normalized
+    train_norm_filled[is.na(train_norm_filled)] <- 0
+    train_conf_filled <- train_confidence
+    train_conf_filled[is.na(train_conf_filled)] <- 0
+    
+    # Make predictions for test set
+    predictions <- numeric(nrow(test_obs))
+    
+    for (i in 1:nrow(test_obs)) {
+      user_idx <- test_obs[i, 1]
+      item_idx <- test_obs[i, 2]
+      
+      # Get user's rated items in training set
+      rated_items <- which(!is.na(train_matrix[user_idx, ]))
+      
+      if (length(rated_items) == 0) {
+        predictions[i] <- item_means[item_idx]
+        next
+      }
+      
+      # Get similarities between target item and user's rated items
+      sims <- item_sim_matrix[item_idx, rated_items]
+      sims[is.na(sims) | is.nan(sims)] <- 0
+      
+      # IMPROVED: Better k-NN filtering (similar to UBCF)
+      if (sum(abs(sims) > 0) > 0 && k < length(sims)) {
+        k_actual <- min(k, sum(abs(sims) > 0))
+        top_k_idx <- order(abs(sims), decreasing = TRUE)[1:k_actual]
+        sims_filtered <- rep(0, length(sims))
+        sims_filtered[top_k_idx] <- sims[top_k_idx]
+        sims <- sims_filtered
+      }
+      
+      # IMPROVED: Better confidence-weighted prediction (similar to UBCF)
+      if (sum(abs(sims)) > 0) {
+        # Weight ratings by confidence
+        weighted_ratings <- train_norm_filled[user_idx, rated_items] * train_conf_filled[user_idx, rated_items]
+        
+        # Weight similarities by confidence
+        weighted_sims <- abs(sims) * train_conf_filled[user_idx, rated_items]
+        
+        # Weighted average
+        weighted_sum <- sum(sims * weighted_ratings)
+        sum_weighted_sims <- sum(weighted_sims)
+        
+        if (sum_weighted_sims > 0) {
+          predictions[i] <- (weighted_sum / sum_weighted_sims) + item_means[item_idx]
+        } else {
+          predictions[i] <- item_means[item_idx]
+        }
+      } else {
+        predictions[i] <- item_means[item_idx]
+      }
+    }
+    
+    # Clip to valid range
+    predictions <- pmin(pmax(predictions, 1), 10)
+    
+    # Get actual ratings
+    actual <- user_item_matrix[test_obs]
+    
+    # Calculate metrics with original ratings for implicit/explicit separation
+    original_ratings <- original_ratings_matrix[test_obs]  # These are the true original ratings
+    metrics <- evaluate_predictions(predictions, actual, original_ratings)
+    
+    cv_results[fold, ] <- list(fold, metrics$rmse_explicit)  # Use explicit-only RMSE
+    
+  }
+  
+  return(cv_results)
+}
+
+# Run cross-validation
+cv_results_ibcf <- cross_validate_ibcf(
+  user_item_matrix_ibcf, 
+  confidence_matrix_ibcf,
+  original_ratings_matrix_ibcf,
+  n_folds = 5, 
+  k = 50)
+
+# Display results
+cv_results_ibcf %>%
+  kable(caption = "IBCF Cross-Validation Results", 
+        digits = 4, 
+        col.names = c("Fold", "RMSE"),
+        align = c("c", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+```
+
+
+
+## 4.3 Matrix Factorization-Based Collaborative Filtering
+
+Matrix factorization decomposes the user-item rating matrix into lower-dimensional user and item factor matrices. This approach captures latent factors that explain user preferences and item characteristics, enabling more accurate predictions even with sparse data.
+
+```{r mf-data-preparation}
+# ================================================================
+# DATA PREPARATION FOR RECOSYSTEM (EXPLICIT RATINGS ONLY)
+# ================================================================
+
+# Create matrix with only explicit ratings for Matrix Factorization
+create_explicit_matrix <- function(ratings_data, 
+                                   min_ratings_per_book = 3, 
+                                   min_ratings_per_user = 2) {
+  
+  # Filter out implicit ratings (0s) - only keep explicit ratings
+  explicit_ratings <- ratings_data %>%
+    filter(Book.Rating > 0) %>%  # Only explicit ratings
+    select(User.ID, ISBN, Book.Rating)
+  
+  # Create user-item matrix
+  user_item_matrix <- explicit_ratings %>%
+    pivot_wider(names_from = ISBN, values_from = Book.Rating, values_fill = NA)
+  
+  # Convert to matrix format
+  user_ids <- user_item_matrix$User.ID
+  user_item_matrix <- as.matrix(user_item_matrix[, -1])
+  rownames(user_item_matrix) <- user_ids
+  
+  # Filter books and users
+  books_to_keep <- colSums(!is.na(user_item_matrix)) >= min_ratings_per_book
+  user_item_matrix <- user_item_matrix[, books_to_keep]
+  
+  users_to_keep <- rowSums(!is.na(user_item_matrix)) >= min_ratings_per_user
+  user_item_matrix <- user_item_matrix[users_to_keep, ]
+  
+  return(user_item_matrix)
+}
+
+prepare_recosystem_data <- function(user_item_matrix, original_ratings_matrix) {
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  
+  # Get all ratings
+  train_data <- data.frame(
+    user_index = observed[,1] - 1,   # 0-based indexing
+    item_index = observed[,2] - 1,
+    rating = user_item_matrix[observed],
+    original_rating = original_ratings_matrix[observed]
+  )
+  
+  # FILTER TO ONLY EXPLICIT RATINGS (original_rating != 0)
+  train_data_explicit <- train_data[train_data$original_rating != 0, ]
+  
+  user_ids <- data.frame(
+    user_index = 0:(nrow(user_item_matrix) - 1),
+    user_id = rownames(user_item_matrix)
+  )
+  
+  item_ids <- data.frame(
+    item_index = 0:(ncol(user_item_matrix) - 1),
+    item_id = colnames(user_item_matrix)
+  )
+  
+  list(
+    train_data = train_data_explicit,
+    user_ids = user_ids,
+    item_ids = item_ids,
+    n_users = nrow(user_item_matrix),
+    n_items = ncol(user_item_matrix)
+  )
+}
+```
+
+
+```{r mf-tuning}
+# ================================================================
+# HYPERPARAMETER TUNING
+# ================================================================
+
+tune_reco_model <- function(train_data,
+                            n_factors = c(10, 20, 30),
+                            learning_rate = c(0.1, 0.05, 0.01),
+                            costp_l2 = c(0.01, 0.1),
+                            costq_l2 = c(0.01, 0.1),
+                            n_iter = 50,
+                            verbose = TRUE) {
+  
+  train_set <- data_memory(
+    user_index = train_data$user_index,
+    item_index = train_data$item_index,
+    rating = train_data$rating,
+    index1 = FALSE
+  )
+  
+  # Create model
+  rs <- Reco()
+  
+  # Tune hyperparameters
+  opts <- rs$tune(train_set, opts = list(
+    dim = n_factors,
+    lrate = learning_rate,
+    costp_l2 = costp_l2,
+    costq_l2 = costq_l2,
+    niter = n_iter,
+    nthread = 4,
+    verbose = verbose
+  ))
+  
+  return(opts)
+}
+```
+
+
+```{r mf-training}
+# ================================================================
+# MODEL TRAINING 
+# ================================================================
+
+train_reco_model <- function(train_data, 
+                             n_factors = 20,
+                             learning_rate = 0.1,
+                             costp_l2 = 0.01,
+                             costq_l2 = 0.01,
+                             n_iter = 100,
+                             n_threads = 4,
+                             verbose = TRUE) {
+  
+  train_set <- data_memory(
+    user_index = train_data$user_index,
+    item_index = train_data$item_index,
+    rating = train_data$rating,
+    index1 = FALSE
+  )
+  
+  model <- Reco()
+  model$train(train_set, opts = list(
+    dim = n_factors,
+    lrate = learning_rate,
+    costp_l2 = costp_l2,
+    costq_l2 = costq_l2,
+    niter = n_iter,
+    nthread = n_threads,
+    verbose = verbose
+  ))
+  
+  return(model)
+}
+```
+
+
+```{r mf-recommendation-functions}
+# ================================================================
+# RECOMMENDATION FUNCTIONS
+# ================================================================
+
+# Recommend for existing users
+recommend_for_user_mf <- function(model, user_item_matrix, user_id, n_recommendations = 10,
+                                  user_ids_map, item_ids_map, book_info) {
+  
+  if (!user_id %in% user_ids_map$user_id) stop("User not found")
+  
+  user_idx <- user_ids_map$user_index[user_ids_map$user_id == user_id]
+  user_row <- user_item_matrix[as.character(user_id), ]
+  unrated_items <- which(is.na(user_row))
+  if (length(unrated_items) == 0) return(data.frame())
+  
+  item_indices <- unrated_items - 1
+  pred_set <- data_memory(user_index = rep(user_idx, length(item_indices)),
+                          item_index = item_indices,
+                          index1 = FALSE)
+  pred_ratings <- model$predict(pred_set, out_memory())
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)  # Clip to valid range
+  
+  top_indices <- order(pred_ratings, decreasing = TRUE)[1:min(n_recommendations, length(pred_ratings))]
+  recommended_items <- colnames(user_item_matrix)[unrated_items[top_indices]]
+  
+  data.frame(
+    ISBN = recommended_items,
+    Predicted_Rating = round(pred_ratings[top_indices], 2)
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+}
+
+# Recommend for new users (cold start) - Hybrid approach
+recommend_for_new_user_mf <- function(model, new_user_ratings, user_item_matrix, 
+                                      item_ids_map, book_info, n_recommendations = 10) {
+  
+  # For new users, use item-based collaborative filtering as fallback
+  # since Matrix Factorization doesn't handle cold start well
+  
+  ratings_df <- if (is.numeric(new_user_ratings) && !is.null(names(new_user_ratings))) {
+    data.frame(item_id = names(new_user_ratings), rating = as.numeric(new_user_ratings), stringsAsFactors = FALSE)
+  } else { new_user_ratings }
+  
+  ratings_df <- ratings_df[ratings_df$item_id %in% item_ids_map$item_id, ]
+  if (nrow(ratings_df) == 0) stop("No rated items exist in training data")
+  
+  # Calculate item means for fallback approach
+  item_means <- colMeans(user_item_matrix, na.rm = TRUE)
+  
+  # Get unrated items
+  all_items <- item_ids_map$item_id
+  rated_items <- ratings_df$item_id
+  unrated_items <- setdiff(all_items, rated_items)
+  
+  if (length(unrated_items) == 0) return(data.frame())
+  
+  # Simple item-based approach: use item means as baseline
+  # Then adjust based on user's rating pattern
+  user_mean_rating <- mean(ratings_df$rating)
+  global_mean_rating <- mean(user_item_matrix, na.rm = TRUE)
+  
+  # Predict ratings using item means adjusted by user bias
+  user_bias <- user_mean_rating - global_mean_rating
+  pred_ratings <- item_means[unrated_items] + user_bias
+  
+  # Clip to valid range
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
+  
+  # Get top recommendations
+  top_indices <- order(pred_ratings, decreasing = TRUE)[1:min(n_recommendations, length(pred_ratings))]
+  recommended_items <- names(pred_ratings)[top_indices]
+  
+  data.frame(
+    ISBN = recommended_items,
+    Predicted_Rating = round(pred_ratings[top_indices], 2)
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+}
+```
+
+
+
+
+
+```{r mf-implementation}
+# ================================================================
+# MATRIX FACTORIZATION IMPLEMENTATION
+# ================================================================
+
+# Create matrices with implicit feedback handling
+matrix_result_mf <- create_user_item_matrix(
+  data,
+  min_ratings_per_book = 5,  
+  min_ratings_per_user = 3,
+  implicit_rating = 4,
+  implicit_confidence = 0.5
+)
+
+user_item_matrix_mf <- matrix_result_mf$ratings
+confidence_matrix_mf <- matrix_result_mf$confidence
+original_ratings_matrix_mf <- matrix_result_mf$original_ratings
+
+# Prepare data for recosystem - FILTERS TO EXPLICIT ONLY
+prepared <- prepare_recosystem_data(user_item_matrix_mf, original_ratings_matrix_mf)
+
+cat("Matrix Factorization using EXPLICIT ratings only\n")
+cat("- Total ratings in matrix:", sum(!is.na(user_item_matrix_mf)), "\n")
+cat("- Explicit ratings used:", nrow(prepared$train_data), "\n")
+cat("- Implicit ratings excluded:", 
+    sum(!is.na(user_item_matrix_mf)) - nrow(prepared$train_data), "\n\n")
+
+# Hyperparameter Optimization
+optimal_params_mf <- tune_reco_model(
+  train_data = prepared$train_data,
+  n_factors = c(10, 20, 30),
+  learning_rate = c(0.1, 0.05, 0.01),
+  costp_l2 = c(0.01, 0.1),
+  costq_l2 = c(0.01, 0.1),
+  n_iter = 50,
+  verbose = FALSE
+)
+
+cat("Optimal hyperparameters:\n")
+cat("- Factors:", optimal_params_mf$min$dim, "\n")
+cat("- Learning rate:", optimal_params_mf$min$lrate, "\n")
+cat("- User regularization:", optimal_params_mf$min$costp_l2, "\n")
+cat("- Item regularization:", optimal_params_mf$min$costq_l2, "\n\n")
+
+# Train Final Model with optimal parameters
+model_mf <- train_reco_model(
+  train_data = prepared$train_data,
+  n_factors = optimal_params_mf$min$dim,
+  learning_rate = optimal_params_mf$min$lrate,
+  costp_l2 = optimal_params_mf$min$costp_l2,
+  costq_l2 = optimal_params_mf$min$costq_l2,
+  n_iter = 100,
+  n_threads = 4,
+  verbose = FALSE
+)
+
+model_mf
+summary(model_mf)
+```
+
+
+
+```{r mf-recommendations}
+# ================================================================
+# GENERATE RECOMMENDATIONS
+# ================================================================
+
+# Existing user
+sample_user <- rownames(user_item_matrix_mf)[3]
+
+recs_existing <- recommend_for_user_mf(
+  model = model_mf,
+  user_item_matrix = user_item_matrix_mf,
+  user_id = sample_user,
+  n_recommendations = 10,
+  user_ids_map = prepared$user_ids,
+  item_ids_map = prepared$item_ids,
+  book_info = book_info
+)
+
+recs_existing %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for Existing User", digits = 2) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover"))
+
+# New user
+new_user_ratings <- setNames(c(7, 8, 6, 5, 7), colnames(user_item_matrix_mf)[1:5])
+
+recs_new <- recommend_for_new_user_mf(
+  model = model_mf,
+  new_user_ratings = new_user_ratings,
+  user_item_matrix = user_item_matrix_mf,
+  item_ids_map = prepared$item_ids,
+  book_info = book_info,
+  n_recommendations = 10
+)
+
+recs_new %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for New User", digits = 2) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover"))
+```
+
+
+```{r cross-validation-mf}
+# ================================================================
+# CROSS-VALIDATION FOR MATRIX FACTORIZATION
+# ================================================================
+
+cross_validate_mf <- function(user_item_matrix, 
+                              original_ratings_matrix,
+                              optimal_params,  # FIXED: Consistent parameter name
+                              n_folds = 5, 
+                              n_iter = 50, 
+                              verbose = TRUE) {
+  set.seed(123)
+  
+  # Get observed ratings
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
+  
+  if (n_ratings < n_folds * 2) {
+    stop("Not enough ratings to perform cross-validation.")
+  }
+  
+  # Assign fold indices randomly
+  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
+  
+  # Store RMSE results
+  cv_results <- data.frame(
+    Fold = integer(n_folds),
+    RMSE = numeric(n_folds)
+  )
+  
+  if (verbose) {
+    cat("Starting", n_folds, "-fold cross-validation with optimal parameters...\n")
+  }
+  
+  for (fold in 1:n_folds) {
+    
+    if (verbose) cat("Fold", fold, "of", n_folds, "... ")
+    
+    # Split train/test by folds
+    test_idx <- which(fold_indices == fold)
+    train_idx <- which(fold_indices != fold)
+    
+    train_obs <- observed[train_idx, , drop = FALSE]
+    test_obs  <- observed[test_idx, , drop = FALSE]
+    
+    # Prepare training data (explicit only)
+    train_data <- data.frame(
+      user_index = train_obs[, 1] - 1,
+      item_index = train_obs[, 2] - 1,
+      rating = user_item_matrix[train_obs],
+      original_rating = original_ratings_matrix[train_obs]
+    )
+    
+    # Filter to explicit ratings only
+    train_data_explicit <- train_data[train_data$original_rating != 0, ]
+    
+    # Prepare test data (explicit only for fair evaluation)
+    test_data <- data.frame(
+      user_index = test_obs[, 1] - 1,
+      item_index = test_obs[, 2] - 1,
+      rating = user_item_matrix[test_obs],
+      original_rating = original_ratings_matrix[test_obs]
+    )
+    
+    test_data_explicit <- test_data[test_data$original_rating != 0, ]
+    
+    if (nrow(test_data_explicit) == 0) {
+      cv_results[fold, ] <- c(fold, NA)
+      next
+    }
+    
+    # Train model
+    train_set <- data_memory(
+      user_index = train_data_explicit$user_index,
+      item_index = train_data_explicit$item_index,
+      rating = train_data_explicit$rating,
+      index1 = FALSE
+    )
+    
+    test_set <- data_memory(
+      user_index = test_data_explicit$user_index,
+      item_index = test_data_explicit$item_index,
+      rating = test_data_explicit$rating,
+      index1 = FALSE
+    )
+    
+    r <- Reco()
+    r$train(train_set, opts = list(
+      dim = optimal_params$min$dim,
+      lrate = optimal_params$min$lrate,
+      costp_l2 = optimal_params$min$costp_l2,
+      costq_l2 = optimal_params$min$costq_l2,
+      niter = n_iter,
+      nthread = 4,
+      verbose = FALSE
+    ))
+    
+    # Predict
+    preds <- r$predict(test_set, out_memory())
+    preds <- pmax(pmin(preds, 10), 1)
+    
+    # Calculate RMSE (explicit only)
+    actual <- test_data_explicit$rating
+    original <- test_data_explicit$original_rating
+    
+    metrics <- evaluate_predictions(preds, actual, original)
+    cv_results[fold, ] <- c(fold, metrics$rmse_explicit)
+    
+    cat("RMSE:", round(metrics$rmse_explicit, 4), "\n")
+  }
+  
+  return(cv_results)
+}
+
+
+
+```
+
+
+
+
+```{r}
+# Run cross-validation
+cv_results_mf <- cross_validate_mf(
+  user_item_matrix = user_item_matrix_mf,
+  original_ratings_matrix = original_ratings_matrix_mf,
+  optimal_params = optimal_params_mf,
+  n_folds = 5,
+  n_iter = 50,
+  verbose = TRUE
+)
+
+# Display results
+cv_results_mf %>%
+  kable(caption = "MF Cross-Validation Results", 
+        digits = 4, 
+        col.names = c("Fold", "RMSE"),
+        align = c("c", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+```
+
+
+
+
+
+## 4.4 Neural Network-Based Collaborative Filtering
+
+Neural networks can learn complex non-linear relationships between users and items through deep learning architectures. H2O's Deep Learning implementation provides scalable neural network training with hyperparameter optimization capabilities.
+
+```{r nn-data-preparation}
+# ================================================================
+# DATA PREPARATION FOR H2O WITH IMPLICIT RATINGS & CONFIDENCE
+# ================================================================
+
+prepare_h2o_data <- function(user_item_matrix, confidence_matrix = NULL, original_ratings_matrix = NULL) {
+  
+  # Apply user-mean normalization
+  user_means <- rowMeans(user_item_matrix, na.rm = TRUE)
+  normalized_matrix <- sweep(user_item_matrix, 1, user_means, FUN = "-")
+
+  # Get observed ratings
+  observed <- which(!is.na(normalized_matrix), arr.ind = TRUE)
+
+  # Create training data with confidence and original rating information
+  train_data <- data.frame(
+    user_id = rownames(user_item_matrix)[observed[, 1]],
+    book_id = colnames(user_item_matrix)[observed[, 2]],
+    rating = as.numeric(normalized_matrix[observed])
+  )
+  
+  # Add confidence scores if provided
+  if (!is.null(confidence_matrix)) {
+    train_data$confidence <- as.numeric(confidence_matrix[observed])
+  } else {
+    # Default confidence of 1.0 for all ratings
+    train_data$confidence <- 1.0
+  }
+  
+  # Add original rating information if provided
+  if (!is.null(original_ratings_matrix)) {
+    train_data$original_rating <- as.numeric(original_ratings_matrix[observed])
+    train_data$is_implicit <- (train_data$original_rating == 0)
+  } else {
+    train_data$original_rating <- train_data$rating + user_means[observed[, 1]]
+    train_data$is_implicit <- FALSE
+  }
+
+  return(list(
+    train_data = train_data,
+    user_ids = data.frame(user_id = rownames(user_item_matrix)),
+    book_ids = data.frame(book_id = colnames(user_item_matrix)),
+    n_users = nrow(user_item_matrix),
+    n_items = ncol(user_item_matrix),
+    user_means = user_means,
+    original_matrix = user_item_matrix,
+    confidence_matrix = confidence_matrix,
+    original_ratings_matrix = original_ratings_matrix
+  ))
+}
+```
+
+
+```{r nn-tuning}
+# ================================================================
+# HYPERPARAMETER TUNING WITH CONFIDENCE WEIGHTING
+# ================================================================
+
+# Initialize H2O cluster
+h2o.init(nthreads = -1, max_mem_size = "4G")
+
+# Create matrices with implicit feedback handling for Neural Network
+# (consistent with other methods)
+matrix_result_nn <- create_user_item_matrix(
+  data,
+  min_ratings_per_book = 5,  
+  min_ratings_per_user = 3,
+  implicit_rating = 4,
+  implicit_confidence = 0.5
+)
+
+user_item_matrix_nn <- matrix_result_nn$ratings
+confidence_matrix_nn <- matrix_result_nn$confidence
+original_ratings_matrix_nn <- matrix_result_nn$original_ratings
+
+# Prepare data for hyperparameter tuning with confidence
+h2o_data_tuning <- prepare_h2o_data(user_item_matrix_nn, confidence_matrix_nn, original_ratings_matrix_nn)
+
+# Convert training data to H2O frame for grid search
+train_h2o_tuning <- as.h2o(h2o_data_tuning$train_data)
+train_h2o_tuning$user_id <- as.factor(train_h2o_tuning$user_id)
+train_h2o_tuning$book_id <- as.factor(train_h2o_tuning$book_id)
+
+# Use confidence as an input feature instead of sample duplication
+# This is a much cleaner approach that lets the neural network learn
+# how to handle different confidence levels
+cat("Using confidence as input feature for neural network training\n")
+cat("Confidence statistics:\n")
+cat("- Mean confidence:", round(mean(as.data.frame(train_h2o_tuning)$confidence), 3), "\n")
+cat("- Min confidence:", round(min(as.data.frame(train_h2o_tuning)$confidence), 3), "\n")
+cat("- Max confidence:", round(max(as.data.frame(train_h2o_tuning)$confidence), 3), "\n\n")
+
+# Use all training data with confidence as a feature
+train_h2o_weighted <- train_h2o_tuning
+
+# Define search space - only Tanh and Rectifier activation functions
+hyper_params <- list(
+  activation = c("Rectifier", "Tanh"),
+  hidden = list(c(64, 32), c(128, 64)),
+  l1 = c(1e-5),
+  l2 = c(1e-5)
+)
+
+set.seed(123)
+
+model_grid <- h2o.grid(
+  algorithm = "deeplearning",
+  grid_id = "nn_grid_book_recommendations",
+  hyper_params = hyper_params,
+  x = c("user_id", "book_id", "confidence"),  # Include confidence as input feature
+  y = "rating",
+  training_frame = train_h2o_weighted,
+  nfolds = 5,
+  stopping_metric = "RMSE",
+  stopping_rounds = 3,
+  stopping_tolerance = 0.001,
+  seed = 123,
+  adaptive_rate = TRUE
+)
+
+# Sort by RMSE
+grid_results <- h2o.getGrid("nn_grid_book_recommendations", sort_by = "rmse", decreasing = FALSE)
+top_models_df <- as.data.frame(grid_results@summary_table)
+
+kable(head(top_models_df, 5), caption = "Top 5 Neural Network Models (H2O Grid Search with Confidence)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+# Best model
+best_model_id <- grid_results@model_ids[[1]]
+best_model <- h2o.getModel(best_model_id)
+cv_rmse <- h2o.rmse(best_model, xval = TRUE)
+
+best_nn_results <- data.frame(
+  Activation = best_model@allparameters$activation,
+  Hidden_Layers = paste(best_model@allparameters$hidden, collapse = ", "),
+  L1_Regularisation = best_model@allparameters$l1,
+  L2_Regularisation = best_model@allparameters$l2,
+  CV_RMSE = round(cv_rmse, 3),
+  Confidence_Weighted = "Yes"
+)
+
+kable(best_nn_results, caption = "Best Neural Network Model Specifications (with Confidence Weighting)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+save(best_nn_results, file = 'best_nn_results.Rdata')
+load('best_nn_results.Rdata')
+```
+
+
+```{r nn-training}
+# ================================================================
+# MODEL TRAINING WITH CONFIDENCE WEIGHTING
+# ================================================================
+
+train_h2o_model <- function(train_data,
+                            hidden = c(64, 32),
+                            epochs = 30,
+                            activation = "Rectifier",
+                            hidden_dropout_ratios = NULL,
+                            l1 = 0.00001,
+                            l2 = 0.00001,
+                            adaptive_rate = TRUE,
+                            rate = 0.001,
+                            seed = 123,
+                            verbose = TRUE) {
+  
+  h2o.no_progress()
+  
+  # Always use confidence as input feature (assume it's always available)
+  features <- c("user_id", "book_id", "confidence")
+  cat("Using confidence as input feature\n")
+  
+  response <- "rating"
+  
+  model <- h2o.deeplearning(
+    x = features,
+    y = response,
+    training_frame = train_data,
+    hidden = hidden,
+    epochs = epochs,
+    activation = activation,
+    l1 = l1,
+    l2 = l2,
+    adaptive_rate = adaptive_rate,
+    seed = seed,
+    verbose = verbose
+  )
+  
+  return(model)
+}
+```
+
+
+
+
+
+
+
+```{r nn-recommendation-functions}
+# ================================================================
+# RECOMMENDATION FUNCTIONS
+# ================================================================
+
+# Function to recommend for existing users with confidence awareness
+recommend_for_user_nn <- function(model, user_item_matrix, user_id,
+                                  n_recommendations = 10,
+                                  user_ids, book_ids, user_means, book_info,
+                                  confidence_matrix = NULL) {
+  
+  # Validate user_id
+  if (!user_id %in% user_ids$user_id) {
+    stop("User ID not found in the training data.")
+  }
+  
+  # Extract unrated books for the given user
+  user_row <- user_item_matrix[as.character(user_id), , drop = TRUE]
+  unrated_books <- which(is.na(user_row))
+  
+  # If the user has rated all books, return empty data frame
+  if (length(unrated_books) == 0) {
+    message("User has rated all available books — no new recommendations.")
+    return(data.frame())
+  }
+  
+  # Prepare prediction input with confidence
+  pred_data <- data.frame(
+    user_id = rep(user_id, length(unrated_books)),
+    book_id = colnames(user_item_matrix)[unrated_books],
+    confidence = 0.5,  # Default confidence for unrated items
+    stringsAsFactors = FALSE
+  )
+  
+  # Convert to H2O frame
+  pred_h2o <- as.h2o(pred_data)
+  pred_h2o$user_id <- as.factor(pred_h2o$user_id)
+  pred_h2o$book_id <- as.factor(pred_h2o$book_id)
+  
+  # Predict ratings
+  predictions <- h2o.predict(model, pred_h2o)
+  predictions_df <- as.data.frame(predictions)
+  
+  # Denormalize predictions (add back user mean)
+  user_mean <- user_means[as.character(user_id)]
+  pred_ratings <- predictions_df$predict + user_mean
+  
+  # Confidence is now handled as an input feature, so no post-processing needed
+  # The neural network has learned to incorporate confidence directly
+  
+  # Ensure valid rating bounds
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
+  
+  # Select top-N recommendations
+  n_to_recommend <- min(n_recommendations, length(pred_ratings))
+  top_indices <- order(pred_ratings, decreasing = TRUE)[1:n_to_recommend]
+  
+  # Create final recommendation table
+  recommendations <- data.frame(
+    ISBN = pred_data$book_id[top_indices],
+    Predicted_Rating = round(pred_ratings[top_indices], 2)
+  )
+  
+  recommendations <- recommendations %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+
+
+
+# Function to recommend for new users (cold start problem)
+recommend_for_new_user_nn <- function(model, new_user_ratings, book_ids,
+                                      book_info, n_recommendations = 10, 
+                                      user_means = NULL) {
+  
+  # For neural networks, we need to use a hybrid approach since 
+  # the model requires existing user factors
+  
+  # Input validation
+  if (length(new_user_ratings) == 0) {
+    stop("No ratings provided for new user")
+  }
+  
+  # Check if rated books exist in training data
+  rated_books <- names(new_user_ratings)
+  valid_books <- rated_books[rated_books %in% book_ids$book_id]
+  
+  if (length(valid_books) == 0) {
+    stop("None of the rated books exist in training data")
+  }
+  
+  # Use content-based approach: recommend books similar to highly-rated ones
+  # Calculate average rating for baseline
+  avg_new_user_rating <- mean(new_user_ratings)
+  global_mean <- mean(user_means, na.rm = TRUE)
+  
+  # Get all unrated books
+  all_books <- book_ids$book_id
+  unrated_books <- setdiff(all_books, rated_books)
+  
+  if (length(unrated_books) == 0) {
+    return(data.frame())
+  }
+  
+  # Simple popularity-based fallback with user bias adjustment
+  # (In practice, you'd want item similarities here)
+  user_bias <- avg_new_user_rating - global_mean
+  
+  # Create predictions based on global average + user bias
+  pred_ratings <- rep(global_mean + user_bias, length(unrated_books))
+  names(pred_ratings) <- unrated_books
+  
+  # Clip predictions
+  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
+  
+  # Sort and select top N
+  top_indices <- order(pred_ratings, decreasing = TRUE)[1:min(n_recommendations, length(pred_ratings))]
+  
+  recommendations <- data.frame(
+    ISBN = unrated_books[top_indices],
+    Predicted_Rating = round(pred_ratings[top_indices], 2)
+  ) %>%
+    left_join(book_info, by = "ISBN") %>%
+    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
+  
+  return(recommendations)
+}
+```
+
+
+```{r}
+# ================================================================
+# CROSS-VALIDATION FOR NEURAL NETWORK
+# ================================================================
+cross_validate_nn <- function(user_item_matrix, 
+                             confidence_matrix = NULL,  # Add confidence matrix parameter
+                             n_folds = 5, 
+                             seed = 123, 
+                             hidden = c(64, 32), 
+                             epochs = 20, 
+                             activation = "Rectifier",
+                             hidden_dropout_ratios = NULL,
+                             l1 = 0.00001, 
+                             l2 = 0.00001) {
+  
+  set.seed(seed)
+  h2o.no_progress()
+  
+  # Handle confidence matrix - if not provided, assume all explicit (confidence = 1)
+  if (is.null(confidence_matrix)) {
+    confidence_matrix <- matrix(1, nrow = nrow(user_item_matrix), ncol = ncol(user_item_matrix))
+    confidence_matrix[is.na(user_item_matrix)] <- NA
+    rownames(confidence_matrix) <- rownames(user_item_matrix)
+    colnames(confidence_matrix) <- colnames(user_item_matrix)
+  }
+  
+  # Get observed ratings (RAW matrix, no normalization yet)
+  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
+  n_ratings <- nrow(observed)
+  
+  if (n_ratings < n_folds * 2) {
+    stop("Not enough ratings for cross-validation")
+  }
+  
+  # Create folds
+  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
+  
+  cv_results <- data.frame(
+    fold = integer(n_folds),
+    rmse = numeric(n_folds)
+  )
+  
+  cat("Starting", n_folds, "-fold cross-validation for Neural Network...\n")
+  
+  for (fold in 1:n_folds) {
+    cat("Fold", fold, "of", n_folds, "... ")
+    
+    # Split data FIRST
+    test_indices <- which(fold_indices == fold)
+    train_indices <- which(fold_indices != fold)
+    
+    test_obs <- observed[test_indices, , drop = FALSE]
+    train_obs <- observed[train_indices, , drop = FALSE]
+    
+    # Create train matrix and confidence matrix
+    train_matrix <- user_item_matrix
+    train_conf_matrix <- confidence_matrix
+    train_matrix[test_obs] <- NA
+    train_conf_matrix[test_obs] <- NA
+    
+    # NOW normalize only the training data (prevents data leakage)
+    train_user_means <- rowMeans(train_matrix, na.rm = TRUE)
+    train_normalized <- sweep(train_matrix, 1, train_user_means, FUN = "-")
+    
+    # Get confidence values for training data
+    train_conf_values <- train_conf_matrix[train_obs]
+    
+    # Create training data with normalized ratings and confidence weighting
+    # For neural networks, we can duplicate samples based on confidence for implicit weighting
+    train_data_base <- data.frame(
+      user_id = rownames(user_item_matrix)[train_obs[, 1]],
+      book_id = colnames(user_item_matrix)[train_obs[, 2]],
+      rating = as.numeric(train_normalized[train_obs]),
+      confidence = train_conf_values
+    )
+    
+    # Use confidence as an input feature instead of sample duplication
+    # This is much cleaner and lets the neural network learn confidence patterns
+    train_data <- train_data_base[, c("user_id", "book_id", "rating", "confidence")]
+    
+    # Create test data with NORMALIZED ratings for consistency
+    # But we'll evaluate on original scale
+    test_user_means <- train_user_means[rownames(user_item_matrix)[test_obs[, 1]]]
+    test_data_normalized <- data.frame(
+      user_id = rownames(user_item_matrix)[test_obs[, 1]],
+      book_id = colnames(user_item_matrix)[test_obs[, 2]],
+      rating = as.numeric(user_item_matrix[test_obs]) - test_user_means,  # Normalize test data
+      confidence = as.numeric(confidence_matrix[test_obs])  # Add confidence for test data
+    )
+    
+    # Keep original ratings for evaluation
+    test_data_original <- data.frame(
+      user_id = rownames(user_item_matrix)[test_obs[, 1]],
+      book_id = colnames(user_item_matrix)[test_obs[, 2]],
+      rating = as.numeric(user_item_matrix[test_obs])
+    )
+    
+    # Convert to H2O frames
+    train_h2o <- as.h2o(train_data)
+    test_h2o <- as.h2o(test_data_normalized)  # Use normalized test data
+    train_h2o$user_id <- as.factor(train_h2o$user_id)
+    train_h2o$book_id <- as.factor(train_h2o$book_id)
+    test_h2o$user_id <- as.factor(test_h2o$user_id)
+    test_h2o$book_id <- as.factor(test_h2o$book_id)
+    
+    # Train model with specified hyperparameters and confidence as feature
+    model <- train_h2o_model(
+      train_data = train_h2o,
+      hidden = hidden,
+      epochs = epochs,
+      activation = activation,
+      hidden_dropout_ratios = hidden_dropout_ratios,
+      l1 = l1,
+      l2 = l2,
+      verbose = FALSE
+    )
+    
+    # Predict on normalized test data
+    predictions <- as.data.frame(h2o.predict(model, test_h2o))
+    
+    # Denormalize predictions
+    predictions_denorm <- predictions$predict + test_user_means
+    
+    # Clip to valid range
+    predictions_denorm <- pmax(pmin(predictions_denorm, 10), 1)
+    
+    # Calculate RMSE on original scale
+    actual <- test_data_original$rating
+    
+    # Check if evaluate_predictions expects additional parameters
+    # If it needs original ratings for implicit/explicit separation:
+    original_ratings <- user_item_matrix[test_obs]
+    
+    # Try to use evaluate_predictions if it exists, otherwise calculate RMSE directly
+    if (exists("evaluate_predictions") && is.function(evaluate_predictions)) {
+      # Check function signature
+      if (length(formals(evaluate_predictions)) >= 3) {
+        metrics <- evaluate_predictions(predictions_denorm, actual, original_ratings)
+        rmse_value <- ifelse(!is.null(metrics$rmse_explicit), metrics$rmse_explicit, metrics$rmse)
+      } else {
+        metrics <- evaluate_predictions(predictions_denorm, actual)
+        rmse_value <- metrics$rmse
+      }
+    } else {
+      # Direct RMSE calculation
+      rmse_value <- sqrt(mean((predictions_denorm - actual)^2, na.rm = TRUE))
+    }
+    
+    cv_results[fold, ] <- list(fold, rmse_value)
+    cat("RMSE:", round(rmse_value, 4), "\n")
+    
+    # Clear model to free memory
+    h2o.rm(model)
+    h2o.rm(train_h2o)
+    h2o.rm(test_h2o)
+    gc()
+  }
+  
+  return(cv_results)
+}
+
+
+```
+
+
+
+```{r nn-implementation}
+# ================================================================
+# NEURAL NETWORK IMPLEMENTATION
+# ================================================================
+
+# Prepare data for final model with confidence matrices
+prepared <- prepare_h2o_data(user_item_matrix_nn, confidence_matrix_nn, original_ratings_matrix_nn)
+
+cat("Data prepared for Neural Network with implicit ratings:\n")
+cat("Users:", prepared$n_users, "\n")
+cat("Items:", prepared$n_items, "\n")
+cat("Total ratings:", nrow(prepared$train_data), "\n")
+cat("Explicit ratings:", sum(!prepared$train_data$is_implicit), "\n")
+cat("Implicit ratings:", sum(prepared$train_data$is_implicit), "\n")
+cat("Average confidence:", round(mean(prepared$train_data$confidence), 3), "\n\n")
+
+
+  optimal_params_nn <- list(
+    hidden = best_model@allparameters$hidden,
+    epochs = ifelse(is.null(best_model@allparameters$epochs), 30, best_model@allparameters$epochs),
+    activation = best_model@allparameters$activation,
+    hidden_dropout_ratios = ifelse(is.null(best_model@allparameters$hidden_dropout_ratios), 
+                                   list(c(0.3, 0.3)), 
+                                   best_model@allparameters$hidden_dropout_ratios)[[1]],
+    l1 = best_model@allparameters$l1,
+    l2 = best_model@allparameters$l2
+  )
+
+
+cat("Using optimal parameters:\n")
+print(optimal_params_nn)
+
+# Cross-Validation with optimal parameters - INCLUDING CONFIDENCE MATRIX
+nn_cv_results <- cross_validate_nn(
+  user_item_matrix_nn,
+  confidence_matrix_nn,  # ADD THIS PARAMETER
+  n_folds = 5,
+  hidden = optimal_params_nn$hidden,
+  epochs = optimal_params_nn$epochs,
+  activation = optimal_params_nn$activation,
+  hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
+  l1 = optimal_params_nn$l1,
+  l2 = optimal_params_nn$l2
+)
+
+# Display cross-validation results
+nn_cv_results %>%
+  kable(caption = "Neural Network Cross-Validation Results", 
+        digits = 4, 
+        col.names = c("Fold", "RMSE"),
+        align = c("c", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+# Summary statistics
+cat("\nCross-validation summary:\n")
+cat("Mean RMSE:", round(mean(nn_cv_results$rmse), 4), "\n")
+cat("SD RMSE:", round(sd(nn_cv_results$rmse), 4), "\n\n")
+
+# Train Final Model for Recommendations with confidence weighting
+cat("Training final model with optimal parameters and confidence weighting...\n")
+
+# Use confidence as input feature - much cleaner approach
+train_data_with_conf <- prepared$train_data
+cat("Training with confidence as input feature\n")
+cat("Confidence distribution:\n")
+cat("- Mean:", round(mean(train_data_with_conf$confidence), 3), "\n")
+cat("- Explicit ratings (conf=1.0):", sum(train_data_with_conf$confidence == 1.0), "\n")
+cat("- Implicit ratings (conf=0.5):", sum(train_data_with_conf$confidence == 0.5), "\n\n")
+
+# Convert training data to H2O frame
+train_h2o <- as.h2o(train_data_with_conf)
+train_h2o$user_id <- as.factor(train_h2o$user_id)
+train_h2o$book_id <- as.factor(train_h2o$book_id)
+
+# Train final model with optimal parameters and confidence as feature
+model_nn <- train_h2o_model(
+  train_data = train_h2o,
+  hidden = optimal_params_nn$hidden,
+  epochs = optimal_params_nn$epochs,
+  activation = optimal_params_nn$activation,
+  hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
+  l1 = optimal_params_nn$l1,
+  l2 = optimal_params_nn$l2,
+  verbose = FALSE
+)
+
+cat("Model training complete!\n\n")
+
+# Display model summary
+cat("Final model summary:\n")
+print(model_nn)
+```
+
+
+```{r nn-recommendations}
+# ================================================================
+# GENERATE RECOMMENDATIONS
+# ================================================================
+
+### RECOMMENDATIONS FOR EXISTING USER
+sample_user <- rownames(user_item_matrix_nn)[3]
+
+recs_nn <- recommend_for_user_nn(
+  model = model_nn,
+  user_item_matrix = user_item_matrix_nn,
+  user_id = sample_user,
+  n_recommendations = 10,
+  user_ids = prepared$user_ids,
+  book_ids = prepared$book_ids,
+  user_means = prepared$user_means,
+  book_info = book_info,
+  confidence_matrix = confidence_matrix_nn  # Include confidence matrix
+)
+
+recs_nn %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for Existing User (Neural Network with Confidence)", 
+        digits = 2, align = c("c", "l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+
+### RECOMMENDATIONS FOR NEW USER
+
+# Simulate new user with 5 book ratings
+sample_books <- colnames(user_item_matrix_nn)[1:5]
+new_user_ratings <- setNames(c(7, 8, 6, 5, 7), sample_books)
+
+# Display new user's ratings
+new_user_ratings_df <- data.frame(
+  ISBN = names(new_user_ratings),
+  Rating = as.numeric(new_user_ratings)
+) %>%
+  left_join(book_info, by = "ISBN") %>%
+  select(Book.Title, Book.Author, Rating)
+
+new_user_ratings_df %>%
+  kable(caption = "New User's Initial Ratings", 
+        digits = 0, align = c("l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+# Get recommendations for new user
+new_user_recs_nn <- recommend_for_new_user_nn(
+  model = model_nn,
+  new_user_ratings = new_user_ratings,
+  book_ids = prepared$book_ids,
+  book_info = book_info,
+  n_recommendations = 10,
+  user_means = prepared$user_means
+)
+
+new_user_recs_nn %>%
+  mutate(Rank = row_number()) %>%
+  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+  kable(caption = "Top 10 Recommendations for New User (Neural Network with Confidence)", 
+        digits = 2, align = c("c", "l", "l", "c")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
+                full_width = FALSE)
+
+# Clean up H2O cluster
+h2o.shutdown(prompt = FALSE)
+```
+
+
+
+
+# 5. Results and Analysis
+
+## 5.1 Cross-Validation Performance Analysis
+```{r}
+# ================================================================
+# PART 3: COMPREHENSIVE CROSS-VALIDATION COMPARISON
+# ================================================================
+
+run_comprehensive_cv_comparison <- function(user_item_matrix, 
+                                           confidence_matrix,
+                                           n_folds = 5, 
+                                           optimal_params_mf, 
+                                           optimal_params_nn, 
+                                           k = 50) {
+  
+  # Initialize H2O cluster
+  h2o.init(nthreads = -1, max_mem_size = "4G")
+  h2o.no_progress()
+  
+  # Pre-allocate results
+  all_results <- data.frame(
+    Method = character(4),
+    CV_RMSE_Mean = numeric(4),
+    CV_RMSE_SD = numeric(4),
+    stringsAsFactors = FALSE
+  )
+  
+  # User-Based CF
+  cat("Running User-Based CF cross-validation...\n")
+  ubcf_cv <- cross_validate_ubcf(user_item_matrix, confidence_matrix, original_ratings_matrix, n_folds = n_folds, k = k)
+  all_results[1, ] <- list(
+    "User-Based CF",
+    round(mean(ubcf_cv$rmse), 3),
+    round(sd(ubcf_cv$rmse), 3)
+  )
+  
+  # Item-Based CF
+  cat("Running Item-Based CF cross-validation...\n")
+  ibcf_cv <- cross_validate_ibcf(user_item_matrix, confidence_matrix, original_ratings_matrix, n_folds = n_folds, k = k)
+  all_results[2, ] <- list(
+    "Item-Based CF",
+    round(mean(ibcf_cv$rmse), 3),
+    round(sd(ibcf_cv$rmse), 3)
+  )
+  
+  # Matrix Factorization (explicit ratings only)
+  cat("Running Matrix Factorization cross-validation...\n")
+  # Create explicit-only matrix for MF
+  user_item_matrix_mf <- create_explicit_matrix(
+    data,
+    min_ratings_per_book = 5,
+    min_ratings_per_user = 3
+  )
+  
+  mf_cv_results <- cross_validate_mf(
+    user_item_matrix_mf,
+    original_ratings_matrix_mf,
+    optimal_params_mf,
+    n_folds = n_folds,
+    n_iter = 50,
+    verbose = FALSE
+  )
+  all_results[3, ] <- list(
+    "Matrix Factorization",
+    round(mean(mf_cv_results$RMSE), 3),
+    round(sd(mf_cv_results$RMSE), 3)
+  )
+  
+  # Neural Network - Fixed to include confidence_matrix parameter
+  cat("Running Neural Network cross-validation...\n")
+  nn_cv_results <- cross_validate_nn(
+    user_item_matrix, 
+    confidence_matrix,  # Add this parameter
+    n_folds = n_folds,
+    hidden = optimal_params_nn$hidden,
+    epochs = optimal_params_nn$epochs,
+    activation = optimal_params_nn$activation,
+    hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
+    l1 = optimal_params_nn$l1,
+    l2 = optimal_params_nn$l2
+  )
+  
+  all_results[4, ] <- list(
+    "Neural Network",
+    round(mean(nn_cv_results$rmse), 3),
+    round(sd(nn_cv_results$rmse), 3)
+  )
+  
+  # Clean up H2O
+  h2o.shutdown(prompt = FALSE)
+  
+  return(all_results)
+}
+
+# ================================================================
+# PREPARE DATA AND RUN COMPARISON
+# ================================================================
+
+# Create unified matrices ONCE for all methods
+if (!exists("user_item_matrix") || !exists("confidence_matrix")) {
+  cat("Creating unified matrices for comparison...\n")
+  matrix_result_unified <- create_user_item_matrix(
+    data,
+    min_ratings_per_book = 5,
+    min_ratings_per_user = 3,
+    implicit_rating = 4,
+    implicit_confidence = 0.5
+  )
+  
+  user_item_matrix <- matrix_result_unified$ratings
+  confidence_matrix <- matrix_result_unified$confidence
+  original_ratings_matrix <- matrix_result_unified$original_ratings
+}
+
+# Display matrix information
+cat("Using unified matrix for comprehensive comparison:\n")
+cat("Matrix dimensions:", nrow(user_item_matrix), "users x", ncol(user_item_matrix), "items\n")
+cat("Matrix sparsity:", round(mean(is.na(user_item_matrix)) * 100, 2), "%\n\n")
+
+# Ensure optimal parameters are available for comparison
+if (!exists("optimal_params_mf")) {
+  optimal_params_mf <- list(
+    min = list(
+      dim = 20,
+      lrate = 0.1,
+      costp_l2 = 0.01,
+      costq_l2 = 0.01
+    )
+  )
+  cat("Using default Matrix Factorization parameters\n")
+}
+
+if (!exists("optimal_params_nn")) {
+  optimal_params_nn <- list(
+    hidden = c(64, 32),
+    epochs = 20,
+    activation = "Rectifier",
+    hidden_dropout_ratios = c(0.3, 0.3),
+    l1 = 0.00001,
+    l2 = 0.00001
+  )
+  cat("Using default Neural Network parameters\n")
+}
+
+cat("Matrix Factorization parameters:\n")
+print(optimal_params_mf$min)  # Note: access the 'min' element
+cat("\nNeural Network parameters:\n")
+print(optimal_params_nn)
+cat("\n")
+
+# Run the comprehensive comparison
+cat("Starting comprehensive cross-validation comparison...\n\n")
+cv_comparison_results <- run_comprehensive_cv_comparison(
+  user_item_matrix = user_item_matrix,
+  confidence_matrix = confidence_matrix,
+  n_folds = 5,
+  optimal_params_mf = optimal_params_mf,
+  optimal_params_nn = optimal_params_nn,
+  k = 50
+)
+
+# Display results in formatted table
+kable(cv_comparison_results, 
+      caption = "Cross-Validation Performance Comparison - All Methods",
+      format = "html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE,
+                position = "center") %>%
+  column_spec(2:3, color = "blue") 
+
+```
+
+
+## 5.2 Dataset Size Impact Analysis
+
+```{r dataset-size-analysis}
+# ================================================================
+# PART 4: DATASET SIZE VS ACCURACY ANALYSIS (REQUIREMENT 3)
+# ================================================================
+
+# First, identify the best performing method from cross-validation
+if (exists("cv_comparison_results")) {
+  best_method <- cv_comparison_results$Method[which.min(cv_comparison_results$CV_RMSE_Mean)]
+  best_rmse <- min(cv_comparison_results$CV_RMSE_Mean)
+  
+  cat("Best performing method:", best_method, "(RMSE:", best_rmse, ")\n")
+  cat("Using", best_method, "for dataset size analysis\n\n")
+  
+  analyze_dataset_size_impact_best <- function(data, book_sizes = c(30, 60, 90, 120, 150), 
+                                              n_folds = 3, best_method, optimal_params_mf, optimal_params_nn) {
+    
+    # Initialize H2O cluster only if Neural Network is the best method
+    if (best_method == "Neural Network") {
+      h2o.init(nthreads = -1, max_mem_size = "4G")
+      h2o.no_progress()
+    }
+    
+    # Pre-allocate results dataframe for efficiency
+    n_total_results <- length(book_sizes)
+    results <- data.frame(
+      Dataset_Size = integer(n_total_results),
+      Method = character(n_total_results),
+      RMSE = numeric(n_total_results),
+      Users = integer(n_total_results),
+      Books = integer(n_total_results),
+      Sparsity = numeric(n_total_results),
+      stringsAsFactors = FALSE
+    )
+    
+    result_idx <- 1
+    
+    for (n_books in book_sizes) {
+      # Sample books
+      available_books <- unique(data$ISBN)
+      sampled_books <- sample(available_books, min(n_books, length(available_books)))
+      subset_data <- data %>% filter(ISBN %in% sampled_books)
+      
+      # Create matrix
+      subset_matrix <- create_user_item_matrix(
+        subset_data, 
+        min_ratings_per_book = 3, 
+        min_ratings_per_user = 2
+      )
+      
+      n_users <- nrow(subset_matrix)
+      n_items <- ncol(subset_matrix)
+      sparsity <- round(mean(is.na(subset_matrix)) * 100, 2)
+      
+      # Evaluate only the best method
+      if (best_method == "Item-Based CF") {
+        cv_results <- cross_validate_ibcf(subset_matrix, n_folds = n_folds, k = 30)
+      } else if (best_method == "User-Based CF") {
+        cv_results <- cross_validate_ubcf(subset_matrix, n_folds = n_folds, k = 30)
+      } else if (best_method == "Matrix Factorization") {
+        cv_results <- cross_validate_mf(subset_matrix, n_folds = n_folds,
+                                       n_factors = optimal_params_mf$min$dim,
+                                       learning_rate = optimal_params_mf$min$lrate,
+                                       costp_l2 = optimal_params_mf$min$costp_l2,
+                                       costq_l2 = optimal_params_mf$min$costq_l2,
+                                       n_iter = 50)
+      } else if (best_method == "Neural Network") {
+        cv_results <- cross_validate_nn(subset_matrix, 
+                                       confidence_matrix = NULL,  # No confidence matrix in subset
+                                       n_folds = n_folds, 
+                                       hidden = optimal_params_nn$hidden,
+                                       epochs = optimal_params_nn$epochs,
+                                       activation = optimal_params_nn$activation,
+                                       hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
+                                       l1 = optimal_params_nn$l1,
+                                       l2 = optimal_params_nn$l2)
+      }
+      
+      results[result_idx, ] <- list(n_books, best_method, round(mean(cv_results$rmse), 3), n_users, n_items, sparsity)
+      result_idx <- result_idx + 1
+    }
+    
+    # Clean up H2O cluster if it was initialized
+    if (best_method == "Neural Network") {
+      h2o.shutdown(prompt = FALSE)
+    }
+    
+    return(results)
+  }
+  
+  # Run dataset size analysis for best method only
+  dataset_size_results <- analyze_dataset_size_impact_best(data, 
+                                                           book_sizes = c(30, 60, 90, 120, 150),
+                                                           n_folds = 3, 
+                                                           best_method = best_method,
+                                                           optimal_params_mf = optimal_params_mf,
+                                                           optimal_params_nn = optimal_params_nn)
+  
+  # Display results in formatted table
+  kable(dataset_size_results, 
+        caption = paste("Dataset Size Impact on Predictive Accuracy -", best_method),
+        format = "html") %>%
+    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                  full_width = FALSE,
+                  position = "center") %>%
+    column_spec(3, color = "red") %>%
+    add_footnote("Note: Lower RMSE values indicate better performance")
+  
+} else {
+  cat("Cross-validation results not available. Please run the comprehensive comparison first.\n")
+}
+```
+
+
+
+# Discussion
+
+* Further work- seperat models for implicit and explicit ratings - combine intellegently
+
+
+
+
+
+# EDA stufff
 
 User Activity Analysis
 
@@ -314,2167 +3048,3 @@ sparsity_summary <- data.frame(
 kable(sparsity_summary, caption = "Dataset Sparsity Analysis") %>%
   kable_styling(latex_options = "HOLD_position")
 ```
-
-
-
-Sample Data for Experimental Validation
-
-```{r sample-data}
-set.seed(123)
-sample_users <- sample(unique(book_ratings$User.ID), 4000)
-sample_data <- data %>% filter(User.ID %in% sample_users)
-
-cat("Sample data dimensions:", dim(sample_data), "\n")
-cat("Sample users:", length(unique(sample_data$User.ID)), "\n")
-cat("Sample books:", length(unique(sample_data$ISBN)), "\n")
-```
-
-
-```{r matrix-construction}
-# -------------------------------------------------------------------
-# Count ratings per book
-# -------------------------------------------------------------------
-counts_per_book <- data %>%
-  group_by(ISBN) %>%
-  summarise(num_ratings = n(), .groups = "drop")
-
-# Plot distribution
-ggplot(counts_per_book, aes(x = num_ratings)) +
-  geom_histogram(binwidth = 1, fill = "skyblue", color = "black") +
-  scale_x_continuous(limits = c(0, quantile(counts_per_book$num_ratings, 0.95))) +
-  labs(title = "Distribution of Ratings per Book",
-       x = "Number of Ratings",
-       y = "Count of Books")
-
-
-# -------------------------------------------------------------------
-# Count ratings per user
-# -------------------------------------------------------------------
-counts_per_user <- data %>%
-  group_by(User.ID) %>%
-  summarise(num_ratings = n(), .groups = "drop")
-
-users_per_count <- counts_per_user %>%
-  count(num_ratings, name = "num_users")
-
-# Plot distribution
-ggplot(counts_per_user, aes(x = num_ratings)) +
-  geom_histogram(binwidth = 1, fill = "lightgreen", color = "black") +
-  scale_x_continuous(limits = c(0, quantile(counts_per_user$num_ratings, 0.95))) +
-  labs(title = "Distribution of Ratings per User",
-       x = "Number of Ratings",
-       y = "Count of Users")
-
-# Total unique users
-length(unique(data$User.ID))
-```
-
-
-# User-Item Matrix Construction
-
-```{r unified-matrix-creation}
-
-# User-item matrix creation function
-create_user_item_matrix <- function(ratings_data, min_ratings_per_book = 3, 
-                                    min_ratings_per_user = 3) {
-  
-  # Convert 0 ratings to NA (unrated)
-  ratings_clean <- ratings_data %>%
-    mutate(Book.Rating = ifelse(Book.Rating == 0, NA, Book.Rating))
-  
-  # Convert to wide format
-  user_item_matrix <- ratings_clean %>%
-    select(User.ID, ISBN, Book.Rating) %>%
-    pivot_wider(names_from = ISBN, values_from = Book.Rating, values_fill = NA)
-  
-  # Convert to matrix
-  user_ids <- user_item_matrix$User.ID
-  user_item_matrix <- as.matrix(user_item_matrix[, -1])
-  rownames(user_item_matrix) <- user_ids
-  
-  # Filter books with too few ratings
-  books_to_keep <- colSums(!is.na(user_item_matrix)) >= min_ratings_per_book
-  user_item_matrix <- user_item_matrix[, books_to_keep]
-  
-  # Filter users with too few ratings
-  users_to_keep <- rowSums(!is.na(user_item_matrix)) >= min_ratings_per_user
-  user_item_matrix <- user_item_matrix[users_to_keep, ]
-  
-  return(user_item_matrix)
-}
-
-user_item_matrix <- create_user_item_matrix(
-  data,
-  min_ratings_per_book = 5,  
-  min_ratings_per_user = 3   
-)
-
-```
-
-
-Evaluation function
-
-```{r}
-# Evaluation metrics function
-evaluate_predictions <- function(pred, actual) {
-  rmse <- sqrt(mean((pred - actual)^2, na.rm = TRUE))
-  rmse_sd <- sd(pred - actual, na.rm = TRUE)
-  return(list(rmse = rmse, rmse_sd = rmse_sd))
-}
-
-```
-
-
-# 4. Collaborative Filtering Methods Implementation
-
-## 4.1 User-Based Collaborative Filtering (UBCF)
-
-
-```{r ubcf-functions}
-
-# User-mean normalization function
-normalize_matrix_user <- function(user_item_matrix) {
-  
-  # Center ratings by subtracting user mean
-  user_means <- rowMeans(user_item_matrix, na.rm = TRUE)
-  user_item_matrix_normalized <- sweep(user_item_matrix, 1, user_means, FUN = "-")
-  
-  return(list(normalized = user_item_matrix_normalized, means = user_means))
-}
-
-
-# Cosine similarity matrix computation for users
-compute_user_similarity_matrix <- function(user_item_matrix_normalized) {
-  
-  n_users <- nrow(user_item_matrix_normalized)
-  
-  # Replace NA with 0 for matrix operations
-  mat <- user_item_matrix_normalized
-  mat[is.na(mat)] <- 0
-  
-  # Dot products between user rating vectors (numerator)
-  numerator <- mat %*% t(mat)
-  
-  # Magnitudes (denominator)
-  magnitudes <- sqrt(rowSums(mat^2))
-  denominator <- outer(magnitudes, magnitudes)
-  
-  # Cosine similarity calculation
-  user_similarity_matrix <- numerator / denominator
-  
-  # Replace NaN values with 0
-  user_similarity_matrix[is.nan(user_similarity_matrix)] <- 0
-  
-  # Set self-similarity to 0
-  diag(user_similarity_matrix) <- 0
-
-  rownames(user_similarity_matrix) <- rownames(user_item_matrix_normalized)
-  colnames(user_similarity_matrix) <- rownames(user_item_matrix_normalized)
-  
-  return(user_similarity_matrix)
-}
-```
-
-```{r ubcf-recommendation-functions}
-# Recommendation function for existing users (UBCF)
-recommend_for_user_ubcf <- function(target_user, user_item_matrix, 
-                                    user_item_matrix_normalized, user_sim_matrix,
-                                    user_means, book_info, n_recommendations = 10, 
-                                    k = NULL) {
-  
-  target_user <- as.character(target_user)
-  
-  # Get unrated books for target user
-  unrated_books <- colnames(user_item_matrix)[is.na(user_item_matrix[target_user, ])]
-  
-  # Get user similarities
-  sims <- user_sim_matrix[target_user, ]
-  
-  # Replace NA and NaN with 0
-  sims[is.na(sims) | is.nan(sims)] <- 0  
-  
-  # k-NN filtering – keeps only top k most similar users
-  if (!is.null(k) && k < length(sims)) {
-    non_zero_count <- sum(sims != 0)
-    if (non_zero_count > 0) {  # safety check
-      k_actual <- min(k, non_zero_count)
-      top_k_users <- names(sort(sims, decreasing = TRUE)[1:k_actual])
-      sims_filtered <- rep(0, length(sims))
-      names(sims_filtered) <- names(sims)
-      sims_filtered[top_k_users] <- sims[top_k_users]
-      sims <- sims_filtered
-    }
-  }
-  
-  # Safety check: Check if any similar users exist - if not return empty df
-  if (sum(abs(sims) > 0) == 0) {
-    return(data.frame())
-  }
-  
-  # Prepare matrix for prediction
-  # Replace NA's with 0's - matrix operations
-  mat <- user_item_matrix_normalized
-  mat[is.na(mat)] <- 0
-  
-  # Predicting ratings for unrated books 
-  # Taking a similarity-weighted average of ratings from similar users
-  weighted_ratings <- t(mat[, unrated_books, drop = FALSE]) %*% sims
-  
-  # Which users rated each unrated book - boolean matrix
-  rated_mask <- !is.na(user_item_matrix[, unrated_books, drop = FALSE])
-  
-  # Sum of similarities only across users who rated the book
-  # Only those with non-zero similarity contribute to the denominator
-  sum_sims <- colSums(rated_mask * abs(sims))
-  
-  # If no similar user rated a book - avoid division by zero
-  sum_sims[sum_sims == 0] <- 1
-  
-  # Calculate predictions (normalized to denormalised)
-  preds <- weighted_ratings / sum_sims
-  preds[is.nan(preds)] <- NA
-  preds <- preds + user_means[target_user]
-  
-  # Convert matrix to named vector
-  preds <- as.vector(preds)
-  names(preds) <- unrated_books  
-  
-  # Clip to valid rating range [1, 10]
-  preds <- pmin(pmax(preds, 1), 10)
-  
-  # Get top N recommendations
-  preds_valid <- preds[!is.na(preds)]
-  
-  if (length(preds_valid) == 0) {return(data.frame())}
-  
-  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
-  
-  # Df of recommended books & their predicted ratings
-  recommendations <- data.frame(
-    ISBN = names(top_books),
-    Predicted_Rating = as.numeric(top_books)) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-```
-
-```{r}
-# Recommendation function for new users (cold start - UBCF)
-recommend_for_new_user_ubcf <- function(new_user_ratings, user_item_matrix, 
-                                        user_item_matrix_normalized, user_means,
-                                        book_info, n_recommendations = 10, 
-                                        k = NULL) {
-  
-  # Input validation
-  if (length(new_user_ratings) == 0) {
-    return(data.frame())
-  }
-  
-  # New user vector aligned with the training matrix, filled with NA
-  new_user_vector <- rep(NA, ncol(user_item_matrix))
-  names(new_user_vector) <- colnames(user_item_matrix)
-  
-  # Fill in the ratings for the user (vectorized approach)
-  matched_books <- names(new_user_ratings)[names(new_user_ratings) %in% names(new_user_vector)]
-  if (length(matched_books) == 0) {
-    return(data.frame())
-  }
-  new_user_vector[matched_books] <- new_user_ratings[matched_books]
-  
-  # User-mean normalisation
-  new_user_mean <- mean(new_user_vector, na.rm = TRUE)
-  new_user_normalized <- new_user_vector - new_user_mean
-  new_user_vec <- new_user_normalized
-  new_user_vec[is.na(new_user_vec)] <- 0
-  
-  mat <- user_item_matrix_normalized
-  mat[is.na(mat)] <- 0
-  
-  # Cosine similarity with zero-magnitude check
-  existing_magnitudes <- sqrt(rowSums(mat^2))
-  new_user_magnitude <- sqrt(sum(new_user_vec^2))
-  
-  # Check for zero magnitude (cannot compute similarity)
-  if (new_user_magnitude == 0) {
-    return(data.frame())
-  }
-  
-  new_user_sims <- as.numeric((mat %*% new_user_vec) / (existing_magnitudes * new_user_magnitude))
-  new_user_sims[is.nan(new_user_sims)] <- 0
-  new_user_sims[is.infinite(new_user_sims)] <- 0
-  new_user_sims[is.na(new_user_sims)] <- 0
-  names(new_user_sims) <- rownames(user_item_matrix_normalized)
-  
-  # k-NN filtering
-  if (!is.null(k) && k < length(new_user_sims)) {
-    top_k_users <- names(sort(new_user_sims, decreasing = TRUE)[1:min(k, sum(new_user_sims != 0))])
-    sims_filtered <- rep(0, length(new_user_sims))
-    names(sims_filtered) <- names(new_user_sims)
-    sims_filtered[top_k_users] <- new_user_sims[top_k_users]
-    new_user_sims <- sims_filtered
-  }
-  
-  # No user similarity - empty df
-  if (sum(abs(new_user_sims) > 0) == 0) {return(data.frame())}
-  
-  # Get unrated books
-  unrated_books <- names(new_user_vector)[is.na(new_user_vector)]
-  
-  # If user has rated all the books - empty df
-  if (length(unrated_books) == 0) {return(data.frame())}
-  
-  # Prediction for all unrated books
-  weighted_ratings <- t(mat[, unrated_books, drop = FALSE]) %*% new_user_sims
-  rated_mask <- !is.na(user_item_matrix[, unrated_books, drop = FALSE])
-  sum_sims <- colSums(rated_mask * abs(new_user_sims))
-
-  sum_sims[sum_sims == 0] <- 1
-  
-  # Calculate predictions (normalised to denormalised)
-  preds <- weighted_ratings / sum_sims
-  preds[is.nan(preds)] <- NA
-  preds <- preds + new_user_mean
-  
-  # Convert matrix to named vector
-  preds <- as.vector(preds)
-  names(preds) <- unrated_books 
-  
-  # Clip to valid rating range [1, 10]
-  preds <- pmin(pmax(preds, 1), 10)
-  
-  # Top N recommendations
-  preds_valid <- preds[!is.na(preds)]
-  if (length(preds_valid) == 0) {return(data.frame())}
-  
-  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
-  
-  recommendations <- data.frame(
-    ISBN = names(top_books),
-    Predicted_Rating = as.numeric(top_books)) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-```
-
-
-```{r ubcf-implementation}
-# ================================================================
-# UBCF IMPLEMENTATION
-# ================================================================
-
-# Use unified matrix for consistency across all methods
-user_item_matrix_ubcf <- user_item_matrix
-
-# Normalize matrix (user-mean)
-normalized_result_ubcf <- normalize_matrix_user(user_item_matrix_ubcf)
-user_item_matrix_normalized_ubcf <- normalized_result_ubcf$normalized
-user_means <- normalized_result_ubcf$means
-
-# Compute user similarity matrix
-user_similarity_matrix <- compute_user_similarity_matrix(user_item_matrix_normalized_ubcf)
-
-# Recommendations for existing user
-sample_user <- rownames(user_item_matrix_ubcf)[3]
-
-recs_ubcf <- recommend_for_user_ubcf(
-  target_user = sample_user,
-  user_item_matrix = user_item_matrix_ubcf,
-  user_item_matrix_normalized = user_item_matrix_normalized_ubcf,
-  user_sim_matrix = user_similarity_matrix,
-  user_means = user_means,
-  book_info = book_info,
-  n_recommendations = 10,
-  k = 50)  
-
-recs_ubcf %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for Existing User (UBCF)", 
-        digits = 2, align = c("c", "l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-# Recommendations for new user (cold start)
-sample_books <- colnames(user_item_matrix_ubcf)[1:5]
-new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
-
-# Display new user's ratings
-new_user_ratings_df <- data.frame(
-  ISBN = names(new_user_ratings),
-  Rating = as.numeric(new_user_ratings)) %>%
-  left_join(book_info, by = "ISBN") %>%
-  select(Book.Title, Book.Author, Rating)
-
-new_user_ratings_df %>%
-  kable(caption = "New User's Initial Ratings", 
-        digits = 0, align = c("l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-new_user_recs_ubcf <- recommend_for_new_user_ubcf(
-  new_user_ratings = new_user_ratings,
-  user_item_matrix = user_item_matrix_ubcf,
-  user_item_matrix_normalized = user_item_matrix_normalized_ubcf,
-  user_means = user_means,
-  book_info = book_info,
-  n_recommendations = 10,
-  k = 50)  
-
-new_user_recs_ubcf %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for New User (UBCF)", 
-        digits = 2, align = c("c", "l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-```
-
-
-```{r cross-validation-ubcf}
-# =====================================
-# CROSS-VALIDATION FOR USER-BASED CF 
-# =====================================
-
-cross_validate_ubcf <- function(user_item_matrix, n_folds = 5, k = 30) {
-  
-  set.seed(123)
-  
-  # Get observed ratings
-  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-  n_ratings <- nrow(observed)
-  
-  # Create folds
-  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
-  
-  # Pre-allocate results dataframe
-  cv_results <- data.frame(
-    fold = integer(n_folds),
-    rmse = numeric(n_folds))
-  
-
-  for (fold in 1:n_folds) {
-    cat("Fold", fold, "of", n_folds, "... ")
-    
-    # Split data
-    test_indices <- which(fold_indices == fold)
-    test_obs <- observed[test_indices, , drop = FALSE]
-    
-    # Create train matrix
-    train_matrix <- user_item_matrix
-    train_matrix[test_obs] <- NA
-    
-    # Normalize (user-mean)
-    norm_result <- normalize_matrix_user(train_matrix)
-    train_normalized <- norm_result$normalized
-    user_means <- norm_result$means
-    
-    # Compute user similarity
-    user_sim_matrix <- compute_user_similarity_matrix(train_normalized)
-    
-    # Prepare normalized matrix for prediction
-    train_norm_filled <- train_normalized
-    train_norm_filled[is.na(train_norm_filled)] <- 0
-    
-    # Make predictions for test set
-    predictions <- numeric(nrow(test_obs))
-    
-    for (i in 1:nrow(test_obs)) {
-      user_idx <- test_obs[i, 1]
-      item_idx <- test_obs[i, 2]
-      
-      # Get similarities to all other users
-      sims <- user_sim_matrix[user_idx, ]
-      sims[is.na(sims) | is.nan(sims)] <- 0
-      
-      # Apply k-NN filtering
-      if (k < length(sims) && sum(abs(sims) > 0) > 0) {
-        k_actual <- min(k, sum(abs(sims) > 0))
-        top_k_idx <- order(abs(sims), decreasing = TRUE)[1:k_actual]
-        sims_filtered <- rep(0, length(sims))
-        sims_filtered[top_k_idx] <- sims[top_k_idx]
-        sims <- sims_filtered
-      }
-      
-      # Find which users (among similar ones) rated this item
-      rated_mask <- !is.na(train_matrix[, item_idx])
-      
-      # If no similar user rated this item, use user mean
-      if (sum(abs(sims[rated_mask])) == 0) {
-        predictions[i] <- user_means[user_idx]
-        next
-      }
-      
-      # Weighted average of similar users' ratings for this item
-      weighted_sum <- sum(sims[rated_mask] * train_norm_filled[rated_mask, item_idx])
-      sum_sims <- sum(abs(sims[rated_mask]))
-      
-      predictions[i] <- (weighted_sum / sum_sims) + user_means[user_idx]
-    }
-    
-    # Clip to valid range
-    predictions <- pmin(pmax(predictions, 1), 10)
-    
-    # Get actual ratings
-    actual <- user_item_matrix[test_obs]
-    
-    # Calculate metrics
-    metrics <- evaluate_predictions(predictions, actual)
-    
-    cv_results[fold, ] <- list(fold, metrics$rmse)
-    
-  }
-  
-  return(cv_results)
-}
-
-# Run cross-validation
-cv_results_ubcf <- cross_validate_ubcf(
-  user_item_matrix_ubcf, 
-  n_folds = 5, 
-  k = 50)
-
-# Display results
-cv_results_ubcf %>%
-  kable(caption = "UBCF Cross-Validation Results", 
-        digits = 4, 
-        col.names = c("Fold", "RMSE"),
-        align = c("c", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-```
-
-
-
-
-## 4.2 Item-Based Collaborative Filtering (IBCF)
-
-Item-based collaborative filtering identifies items with similar rating patterns and recommends items similar to those a user has rated highly. This approach is more stable than user-based methods as item preferences change less frequently than user preferences.
-
-```{r ibcf-functions}
-
-# Item-mean normalization function
-normalize_matrix_item <- function(user_item_matrix) {
-  
-  # Center ratings by subtracting item mean
-  item_means <- colMeans(user_item_matrix, na.rm = TRUE)
-  user_item_matrix_normalized <- sweep(user_item_matrix, 2, item_means, FUN = "-")
-  
-  return(list(normalized = user_item_matrix_normalized, means = item_means))
-}
-
-
-# Cosine similarity matrix computation for items
-compute_item_similarity_matrix <- function(user_item_matrix_normalized) {
-  
-  n_items <- ncol(user_item_matrix_normalized)
-  
-  # Replace NA with 0 for matrix operations
-  mat <- user_item_matrix_normalized
-  mat[is.na(mat)] <- 0
-  
-  # Transpose to work with items as rows
-  mat_t <- t(mat)
-  
-  # Dot products between item rating vectors (numerator)
-  numerator <- mat_t %*% t(mat_t)
-  
-  # Magnitudes (denominator)
-  magnitudes <- sqrt(rowSums(mat_t^2))
-  denominator <- outer(magnitudes, magnitudes)
-  
-  # Cosine similarity calculation
-  item_similarity_matrix <- numerator / denominator
-  
-  # Replace NaN values with 0
-  item_similarity_matrix[is.nan(item_similarity_matrix)] <- 0
-  
-  # Set self-similarity to 0
-  diag(item_similarity_matrix) <- 0
-
-  rownames(item_similarity_matrix) <- colnames(user_item_matrix_normalized)
-  colnames(item_similarity_matrix) <- colnames(user_item_matrix_normalized)
-  
-  return(item_similarity_matrix)
-}
-```
-
-
-```{r ibcf-recommendation-functions}
-# Recommendation function for existing users (IBCF)
-recommend_for_user_ibcf <- function(target_user, user_item_matrix,
-                                    user_item_matrix_normalized, item_sim_matrix,
-                                    item_means, book_info, n_recommendations = 10,
-                                    k = NULL) {
-  
-  target_user <- as.character(target_user)
-  
-  # Get unrated books for target user
-  unrated_books <- colnames(user_item_matrix)[is.na(user_item_matrix[target_user, ])]
-  
-  # Get item similarities for unrated books
-  item_sims <- item_sim_matrix[unrated_books, , drop = FALSE]
-  
-  # Replace NA and NaN with 0
-  item_sims[is.na(item_sims) | is.nan(item_sims)] <- 0
-  
-  # k-NN filtering – keeps only top k most similar items
-  if (!is.null(k) && k < ncol(item_sims)) {
-    for (i in 1:nrow(item_sims)) {
-      sims <- item_sims[i, ]
-      non_zero_count <- sum(sims != 0)
-      if (non_zero_count > 0) {
-        k_actual <- min(k, non_zero_count)
-        top_k_items <- names(sort(abs(sims), decreasing = TRUE)[1:k_actual])
-        sims_filtered <- rep(0, length(sims))
-        names(sims_filtered) <- names(sims)
-        sims_filtered[top_k_items] <- sims[top_k_items]
-        item_sims[i, ] <- sims_filtered
-      }
-    }
-  }
-  
-  # Check if any similar items exist
-  if (sum(abs(item_sims) > 0) == 0) {
-    return(data.frame())
-  }
-  
-  # Replace NA's with 0's for matrix operations
-  mat <- user_item_matrix_normalized
-  mat[is.na(mat)] <- 0
-  
-  # Predicting ratings for unrated books using item similarities
-  weighted_ratings <- item_sims %*% mat[target_user, ]
-  
-  # Uses only items that were rated by the user
-  rated_mask <- !is.na(user_item_matrix[target_user, ])
-  
-  # Sum of similarities only across items the user rated
-  sum_sims <- rowSums(rated_mask * abs(item_sims))
-  
-  # If no similar item was rated - avoid division by zero
-  sum_sims[sum_sims == 0] <- 1
-  
-  # Calculate predictions (normalized to denormalised)
-  preds <- weighted_ratings / sum_sims
-  preds[is.nan(preds)] <- NA
-  preds <- preds + item_means[unrated_books]
-  
-  # Convert matrix to named vector
-  preds <- as.vector(preds)
-  names(preds) <- unrated_books
-  
-  # Clip to valid rating range [1, 10]
-  preds <- pmin(pmax(preds, 1), 10)
-  
-  # Get top N recommendations
-  preds_valid <- preds[!is.na(preds)]
-  
-  if (length(preds_valid) == 0) {
-    return(data.frame())
-  }
-  
-  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
-  
-  # Df of recommended books & their predicted ratings
-  recommendations <- data.frame(
-    ISBN = names(top_books),
-    Predicted_Rating = as.numeric(top_books)) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-```
-
-
-```{r}
-# Recommendation function for new users (cold start - IBCF)
-recommend_for_new_user_ibcf <- function(new_user_ratings, user_item_matrix,
-                                        user_item_matrix_normalized, item_means,
-                                        item_sim_matrix, book_info,
-                                        n_recommendations = 10, k = NULL) {
-  
-  # Input validation
-  if (length(new_user_ratings) == 0) {
-    return(data.frame())
-  }
-  
-  # New user vector aligned with the training matrix, filled with NA
-  new_user_vector <- rep(NA, ncol(user_item_matrix))
-  names(new_user_vector) <- colnames(user_item_matrix)
-  
-  # Fill in the ratings for the user (vectorized approach)
-  matched_books <- names(new_user_ratings)[names(new_user_ratings) %in% names(new_user_vector)]
-  if (length(matched_books) == 0) {
-    return(data.frame())
-  }
-  new_user_vector[matched_books] <- new_user_ratings[matched_books]
-  
-  # Get unrated books
-  unrated_books <- names(new_user_vector)[is.na(new_user_vector)]
-  
-  # If user has rated all the books - empty df
-  if (length(unrated_books) == 0) {
-    return(data.frame())
-  }
-  
-  # Item-mean normalisation for new user
-  new_user_normalized <- new_user_vector - item_means
-  new_user_vec <- new_user_normalized
-  new_user_vec[is.na(new_user_vec)] <- 0
-  
-  # Get item similarities for unrated books
-  item_sims <- item_sim_matrix[unrated_books, , drop = FALSE]
-  
-  # Replace NA and NaN with 0
-  item_sims[is.na(item_sims) | is.nan(item_sims)] <- 0
-  
-  # k-NN filtering – keeps only top k most similar items
-  if (!is.null(k) && k < ncol(item_sims)) {
-    for (i in 1:nrow(item_sims)) {
-      sims <- item_sims[i, ]
-      non_zero_count <- sum(sims != 0)
-      if (non_zero_count > 0) {
-        k_actual <- min(k, non_zero_count)
-        top_k_items <- names(sort(abs(sims), decreasing = TRUE)[1:k_actual])
-        sims_filtered <- rep(0, length(sims))
-        names(sims_filtered) <- names(sims)
-        sims_filtered[top_k_items] <- sims[top_k_items]
-        item_sims[i, ] <- sims_filtered
-      }
-    }
-  }
-  
-  # Check if any similar items exist
-  if (sum(abs(item_sims) > 0) == 0) {
-    return(data.frame())
-  }
-  
-  # Predicting ratings for unrated books using item similarities
-  weighted_ratings <- item_sims %*% new_user_vec
-  
-  # Uses only items that were rated by the user
-  rated_mask <- !is.na(new_user_vector)
-  
-  # Sum of similarities only across items the user rated
-  sum_sims <- rowSums(rated_mask * abs(item_sims))
-  
-  # If no similar item was rated - avoid division by zero
-  sum_sims[sum_sims == 0] <- 1
-  
-  # Calculate predictions (normalized to denormalised)
-  preds <- weighted_ratings / sum_sims
-  preds[is.nan(preds)] <- NA
-  preds <- preds + item_means[unrated_books]
-  
-  # Convert matrix to named vector
-  preds <- as.vector(preds)
-  names(preds) <- unrated_books
-  
-  # Clip to valid rating range [1, 10]
-  preds <- pmin(pmax(preds, 1), 10)
-  
-  # Get top N recommendations
-  preds_valid <- preds[!is.na(preds)]
-  
-  if (length(preds_valid) == 0) {
-    return(data.frame())
-  }
-  
-  top_books <- sort(preds_valid, decreasing = TRUE)[1:min(n_recommendations, length(preds_valid))]
-  
-  # Df of recommended books & their predicted ratings
-  recommendations <- data.frame(
-    ISBN = names(top_books),
-    Predicted_Rating = as.numeric(top_books)) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-```
-
-
-```{r ibcf-implementation}
-# ================================================================
-# IBCF IMPLEMENTATION
-# ================================================================
-
-# Use unified matrix for consistency across all methods
-user_item_matrix_ibcf <- user_item_matrix
-
-# Normalize matrix (item-mean)
-normalized_result_ibcf <- normalize_matrix_item(user_item_matrix_ibcf)
-user_item_matrix_normalized_ibcf <- normalized_result_ibcf$normalized
-item_means <- normalized_result_ibcf$means
-
-# Compute item-item similarity matrix
-item_similarity_matrix <- compute_item_similarity_matrix(user_item_matrix_normalized_ibcf)
-
-# Recommendations for existing user
-sample_user <- rownames(user_item_matrix_ibcf)[3]
-
-recs_ibcf <- recommend_for_user_ibcf(
-  target_user = sample_user,
-  user_item_matrix = user_item_matrix_ibcf,
-  user_item_matrix_normalized = user_item_matrix_normalized_ibcf,
-  item_sim_matrix = item_similarity_matrix,
-  item_means = item_means,
-  book_info = book_info,
-  n_recommendations = 10,
-  k = 50)
-
-recs_ibcf %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for Existing User (IBCF)", 
-        digits = 2, align = c("c", "l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-# Recommendations for new user (cold start)
-sample_books <- colnames(user_item_matrix_ibcf)[1:5]
-new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
-
-# Display new user's ratings
-new_user_ratings_df <- data.frame(
-  ISBN = names(new_user_ratings),
-  Rating = as.numeric(new_user_ratings)) %>%
-  left_join(book_info, by = "ISBN") %>%
-  select(Book.Title, Book.Author, Rating)
-
-new_user_ratings_df %>%
-  kable(caption = "New User's Initial Ratings", 
-        digits = 0, align = c("l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-new_user_recs_ibcf <- recommend_for_new_user_ibcf(
-  new_user_ratings = new_user_ratings,
-  user_item_matrix = user_item_matrix_ibcf,
-  user_item_matrix_normalized = user_item_matrix_normalized_ibcf,
-  item_means = item_means,
-  item_sim_matrix = item_similarity_matrix,
-  book_info = book_info,
-  n_recommendations = 10,
-  k = 50)  
-
-new_user_recs_ibcf %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for New User (IBCF)", 
-        digits = 2, align = c("c", "l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-```
-
-
-```{r cross-validation-ibcf}
-# ================================================================
-# CROSS-VALIDATION FOR ITEM-BASED CF
-# ================================================================
-
-cross_validate_ibcf <- function(user_item_matrix, n_folds = 5, k = 30) {
-  
-  set.seed(123)
-  
-  # Get observed ratings
-  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-  n_ratings <- nrow(observed)
-  
-  # Create folds
-  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
-  
-  # Pre-allocate results dataframe
-  cv_results <- data.frame(
-    fold = integer(n_folds),
-    rmse = numeric(n_folds))
-  
-  for (fold in 1:n_folds) {
-    cat("Fold", fold, "of", n_folds, "... ")
-    
-    # Split data
-    test_indices <- which(fold_indices == fold)
-    test_obs <- observed[test_indices, , drop = FALSE]
-    
-    # Create train matrix
-    train_matrix <- user_item_matrix
-    train_matrix[test_obs] <- NA
-    
-    # Normalize (item-mean)
-    norm_result <- normalize_matrix_item(train_matrix)
-    train_normalized <- norm_result$normalized
-    item_means <- norm_result$means
-    
-    # Compute item similarity
-    item_sim_matrix <- compute_item_similarity_matrix(train_normalized)
-    
-    # Prepare normalized matrix for prediction
-    train_norm_filled <- train_normalized
-    train_norm_filled[is.na(train_norm_filled)] <- 0
-    
-    # Make predictions for test set
-    predictions <- numeric(nrow(test_obs))
-    
-    for (i in 1:nrow(test_obs)) {
-      user_idx <- test_obs[i, 1]
-      item_idx <- test_obs[i, 2]
-      
-      # Get user's rated items in training set
-      rated_items <- which(!is.na(train_matrix[user_idx, ]))
-      
-      if (length(rated_items) == 0) {
-        predictions[i] <- item_means[item_idx]
-        next
-      }
-      
-      # Get similarities between target item and user's rated items
-      sims <- item_sim_matrix[item_idx, rated_items]
-      sims[is.na(sims) | is.nan(sims)] <- 0
-      
-      # Apply k-NN filtering
-      if (sum(abs(sims) > 0) > 0 && k < length(sims)) {
-        k_actual <- min(k, sum(abs(sims) > 0))
-        top_k_idx <- order(abs(sims), decreasing = TRUE)[1:k_actual]
-        sims_filtered <- rep(0, length(sims))
-        sims_filtered[top_k_idx] <- sims[top_k_idx]
-        sims <- sims_filtered
-      }
-      
-      # Predict using weighted average of similar items
-      if (sum(abs(sims)) > 0) {
-        weighted_sum <- sum(sims * train_norm_filled[user_idx, rated_items])
-        predictions[i] <- (weighted_sum / sum(abs(sims))) + item_means[item_idx]
-      } else {
-        predictions[i] <- item_means[item_idx]
-      }
-    }
-    
-    # Clip to valid range
-    predictions <- pmin(pmax(predictions, 1), 10)
-    
-    # Get actual ratings
-    actual <- user_item_matrix[test_obs]
-    
-    # Calculate metrics
-    metrics <- evaluate_predictions(predictions, actual)
-    
-    cv_results[fold, ] <- list(fold, metrics$rmse)
-    
-  }
-  
-  return(cv_results)
-}
-
-# Run cross-validation
-cv_results_ibcf <- cross_validate_ibcf(
-  user_item_matrix_ibcf, 
-  n_folds = 5, 
-  k = 50)
-
-# Display results
-cv_results_ibcf %>%
-  kable(caption = "IBCF Cross-Validation Results", 
-        digits = 4, 
-        col.names = c("Fold", "RMSE"),
-        align = c("c", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-```
-
-
-
-## 4.3 Matrix Factorization-Based Collaborative Filtering
-
-Matrix factorization decomposes the user-item rating matrix into lower-dimensional user and item factor matrices. This approach captures latent factors that explain user preferences and item characteristics, enabling more accurate predictions even with sparse data.
-
-```{r mf-data-preparation}
-# ================================================================
-# DATA PREPARATION FOR RECOSYSTEM
-# ================================================================
-
-prepare_recosystem_data <- function(user_item_matrix) {
-  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-  
-  train_data <- data.frame(
-    user_index = observed[,1] - 1,   # 0-based indexing
-    item_index = observed[,2] - 1,
-    rating = user_item_matrix[observed]
-  )
-  
-  user_ids <- data.frame(
-    user_index = 0:(nrow(user_item_matrix) - 1),
-    user_id = rownames(user_item_matrix)
-  )
-  
-  item_ids <- data.frame(
-    item_index = 0:(ncol(user_item_matrix) - 1),
-    item_id = colnames(user_item_matrix)
-  )
-  
-  list(
-    train_data = train_data,
-    user_ids = user_ids,
-    item_ids = item_ids,
-    n_users = nrow(user_item_matrix),
-    n_items = ncol(user_item_matrix)
-  )
-}
-```
-
-
-```{r mf-tuning}
-# ================================================================
-# HYPERPARAMETER TUNING
-# ================================================================
-
-tune_reco_model <- function(train_data,
-                            n_factors = c(10, 20, 30),
-                            learning_rate = c(0.1, 0.05, 0.01),
-                            costp_l2 = c(0.01, 0.1),
-                            costq_l2 = c(0.01, 0.1),
-                            n_iter = 50,
-                            verbose = TRUE) {
-  
-  # Create data source
-  train_set <- data_memory(
-    user_index = train_data$user_index,
-    item_index = train_data$item_index,
-    rating = train_data$rating,
-    index1 = FALSE
-  )
-  
-  # Create model
-  rs <- Reco()
-  
-  # Tune hyperparameters - CAPTURE THE RETURN VALUE!
-  opts <- rs$tune(train_set, opts = list(
-    dim = n_factors,
-    lrate = learning_rate,
-    costp_l2 = costp_l2,
-    costq_l2 = costq_l2,
-    niter = n_iter,
-    nthread = 4,
-    verbose = verbose
-  ))
-  
-  # Return the captured opts (which contains $min)
-  return(opts)
-}
-```
-
-
-```{r mf-training}
-# ================================================================
-# MODEL TRAINING 
-# ================================================================
-
-train_reco_model <- function(train_data, 
-                             n_factors = 20,
-                             learning_rate = 0.1,
-                             costp_l2 = 0.01,
-                             costq_l2 = 0.01,
-                             n_iter = 100,
-                             n_threads = 4,
-                             verbose = TRUE) {
-  
-  train_set <- data_memory(
-    user_index = train_data$user_index,
-    item_index = train_data$item_index,
-    rating = train_data$rating,
-    index1 = FALSE
-  )
-  
-  model <- Reco()
-  model$train(train_set, opts = list(
-    dim = n_factors,
-    lrate = learning_rate,
-    costp_l2 = costp_l2,
-    costq_l2 = costq_l2,
-    niter = n_iter,
-    nthread = n_threads,
-    verbose = verbose
-  ))
-  
-  return(model)
-}
-```
-
-
-```{r mf-recommendation-functions}
-# ================================================================
-# RECOMMENDATION FUNCTIONS
-# ================================================================
-
-# Recommend for existing users
-recommend_for_user_mf <- function(model, user_item_matrix, user_id, n_recommendations = 10,
-                                  user_ids_map, item_ids_map, book_info) {
-  
-  if (!user_id %in% user_ids_map$user_id) stop("User not found")
-  
-  user_idx <- user_ids_map$user_index[user_ids_map$user_id == user_id]
-  user_row <- user_item_matrix[as.character(user_id), ]
-  unrated_items <- which(is.na(user_row))
-  if (length(unrated_items) == 0) return(data.frame())
-  
-  item_indices <- unrated_items - 1
-  pred_set <- data_memory(user_index = rep(user_idx, length(item_indices)),
-                          item_index = item_indices,
-                          index1 = FALSE)
-  pred_ratings <- model$predict(pred_set, out_memory())
-  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
-  
-  top_indices <- order(pred_ratings, decreasing = TRUE)[1:min(n_recommendations, length(pred_ratings))]
-  recommended_items <- colnames(user_item_matrix)[unrated_items[top_indices]]
-  
-  data.frame(
-    ISBN = recommended_items,
-    Predicted_Rating = round(pred_ratings[top_indices], 2)
-  ) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-}
-
-# Recommend for new users (cold start)
-recommend_for_new_user_mf <- function(model, new_user_ratings, user_item_matrix, 
-                                      item_ids_map, book_info, n_recommendations = 10) {
-  
-  ratings_df <- if (is.numeric(new_user_ratings) && !is.null(names(new_user_ratings))) {
-    data.frame(item_id = names(new_user_ratings), rating = as.numeric(new_user_ratings), stringsAsFactors = FALSE)
-  } else { new_user_ratings }
-  
-  ratings_df <- ratings_df[ratings_df$item_id %in% item_ids_map$item_id, ]
-  if (nrow(ratings_df) == 0) stop("No rated items exist in training data")
-  
-  rated_indices <- item_ids_map$item_index[match(ratings_df$item_id, item_ids_map$item_id)]
-  temp_user_idx <- nrow(user_item_matrix)
-  unrated_indices <- setdiff(0:(nrow(item_ids_map)-1), rated_indices)
-  
-  if (length(unrated_indices) == 0) return(data.frame())
-  
-  pred_set <- data_memory(user_index = rep(temp_user_idx, length(unrated_indices)),
-                          item_index = unrated_indices, index1 = FALSE)
-  pred_ratings <- model$predict(pred_set, out_memory())
-  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
-  
-  top_indices <- order(pred_ratings, decreasing = TRUE)[1:min(n_recommendations, length(pred_ratings))]
-  recommended_item_ids <- item_ids_map$item_id[match(unrated_indices[top_indices], item_ids_map$item_index)]
-  
-  data.frame(
-    ISBN = recommended_item_ids,
-    Predicted_Rating = round(pred_ratings[top_indices], 2)
-  ) %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-}
-```
-
-
-
-
-
-```{r mf-implementation}
-# ================================================================
-# MATRIX FACTORIZATION IMPLEMENTATION
-# ================================================================
-
-# Use unified matrix for consistency across all methods
-user_item_matrix_mf <- user_item_matrix
-
-# Prepare data for recosystem
-prepared <- prepare_recosystem_data(user_item_matrix_mf)
-
-# Hyperparameter Optimization
-optimal_params_mf <- tune_reco_model(
-  train_data = prepared$train_data,
-  n_factors = c(10, 20, 30),
-  learning_rate = c(0.1, 0.05, 0.01),
-  costp_l2 = c(0.01, 0.1),
-  costq_l2 = c(0.01, 0.1),
-  n_iter = 50,
-  verbose = FALSE
-)
-
-# Train Final Model with optimal parameters
-model_mf <- train_reco_model(
-  train_data = prepared$train_data,
-  n_factors = optimal_params_mf$min$dim,
-  learning_rate = optimal_params_mf$min$lrate,
-  costp_l2 = optimal_params_mf$min$costp_l2,
-  costq_l2 = optimal_params_mf$min$costq_l2,
-  n_iter = 100,
-  n_threads = 4,
-  verbose = FALSE
-)
-
-model_mf
-summary(model_mf)
-```
-
-
-
-```{r cross-validation-mf}
-# ================================================================
-# CROSS-VALIDATION FOR MATRIX FACTORIZATION
-# ================================================================
-
-cross_validate_mf_recosystem <- function(user_item_matrix, 
-                                         optimal_params_mf,
-                                         n_folds = 5, 
-                                         n_iter = 50, 
-                                         seed = 123, 
-                                         verbose = TRUE) {
-  set.seed(seed)
-  
-  # Get observed ratings (non-missing entries)
-  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-  n_ratings <- nrow(observed)
-  
-  if (n_ratings < n_folds * 2) {
-    stop("Not enough ratings to perform cross-validation.")
-  }
-  
-  # Assign fold indices randomly
-  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
-  
-  # Store RMSE results
-  cv_results <- data.frame(
-    Fold = integer(n_folds),
-    RMSE = numeric(n_folds)
-  )
-  
-  if (verbose) {
-    cat("Starting", n_folds, "-fold cross-validation with optimal parameters...\n")
-  }
-  
-  for (fold in 1:n_folds) {
-    
-    if (verbose) cat("Fold", fold, "of", n_folds, "... ")
-    
-    # Split train/test by folds
-    test_idx <- which(fold_indices == fold)
-    train_idx <- which(fold_indices != fold)
-    
-    train_obs <- observed[train_idx, , drop = FALSE]
-    test_obs  <- observed[test_idx, , drop = FALSE]
-    
-    # Prepare training data
-    train_data <- data.frame(
-      user_index = train_obs[, 1] - 1,   # 0-based indexing
-      item_index = train_obs[, 2] - 1,
-      rating = user_item_matrix[train_obs]
-    )
-    
-    # Prepare test data
-    test_data <- data.frame(
-      user_index = test_obs[, 1] - 1,
-      item_index = test_obs[, 2] - 1,
-      rating = user_item_matrix[test_obs]
-    )
-    
-    # Convert to recosystem data source
-    train_set <- data_memory(
-      user_index = train_data$user_index,
-      item_index = train_data$item_index,
-      rating = train_data$rating,
-      index1 = FALSE
-    )
-    
-    test_set <- data_memory(
-      user_index = test_data$user_index,
-      item_index = test_data$item_index,
-      rating = test_data$rating,
-      index1 = FALSE
-    )
-    
-    # Initialize and train the model with optimal parameters
-    r <- Reco()
-    
-    r$train(train_set, opts = list(
-      dim = optimal_params_mf$min$dim,
-      lrate = optimal_params_mf$min$lrate,
-      costp_l2 = optimal_params_mf$min$costp_l2,
-      costq_l2 = optimal_params_mf$min$costq_l2,
-      niter = n_iter,
-      nthread = 4,
-      verbose = FALSE
-    ))
-    
-    # Predict ratings for test set
-    preds <- r$predict(test_set, out_memory())
-    
-    # Clip to valid range (1–10)
-    preds <- pmax(pmin(preds, 10), 1)
-    
-    # Calculate RMSE using evaluate_predictions function
-    metrics <- evaluate_predictions(preds, test_data$rating)
-    cv_results[fold, ] <- c(fold, metrics$rmse)
-
-  }
-  
-  # Summary statistics
-  mean_rmse <- mean(cv_results$RMSE, na.rm = TRUE)
-  sd_rmse <- sd(cv_results$RMSE, na.rm = TRUE)
-  
-  return(cv_results)
-}
-```
-
-
-
-
-```{r}
-# Run CV with optimal parameters from tuning
-cv_results_mf <- cross_validate_mf_recosystem(
-  user_item_matrix = user_item_matrix_mf,
-  optimal_params = optimal_params_mf,
-  n_folds = 5,
-  n_iter = 50,
-  seed = 42
-)
-
-cv_results_mf %>%
-  knitr::kable(caption = "Matrix Factorization Cross-Validation Results", digits = 4) %>%
-  kableExtra::kable_styling(bootstrap_options = c("striped", "hover"), full_width = FALSE)
-
-```
-
-
-```{r mf-recommendations}
-# ================================================================
-# GENERATE RECOMMENDATIONS
-# ================================================================
-
-# Existing user
-sample_user <- rownames(user_item_matrix_mf)[3]
-
-recs_existing <- recommend_for_user_mf(
-  model = model_mf,
-  user_item_matrix = user_item_matrix_mf,
-  user_id = sample_user,
-  n_recommendations = 10,
-  user_ids_map = prepared$user_ids,
-  item_ids_map = prepared$item_ids,
-  book_info = book_info
-)
-
-recs_existing %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for Existing User", digits = 2) %>%
-  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover"))
-
-# New user
-new_user_ratings <- setNames(c(8, 9, 7, 6, 8), colnames(user_item_matrix_mf)[1:5])
-
-recs_new <- recommend_for_new_user_mf(
-  model = model_mf,
-  new_user_ratings = new_user_ratings,
-  user_item_matrix = user_item_matrix_mf,
-  item_ids_map = prepared$item_ids,
-  book_info = book_info,
-  n_recommendations = 10
-)
-
-recs_new %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for New User", digits = 2) %>%
-  kable_styling(full_width = FALSE, bootstrap_options = c("striped","hover"))
-```
-
-
-
-## 4.4 Neural Network-Based Collaborative Filtering
-
-Neural networks can learn complex non-linear relationships between users and items through deep learning architectures. H2O's Deep Learning implementation provides scalable neural network training with hyperparameter optimization capabilities.
-
-```{r nn-data-preparation}
-# ================================================================
-# DATA PREPARATION FOR H2O
-# ================================================================
-
-prepare_h2o_data <- function(user_item_matrix) {
-  
-  # Apply user-mean normalization
-  user_means <- rowMeans(user_item_matrix, na.rm = TRUE)
-  normalized_matrix <- sweep(user_item_matrix, 1, user_means, FUN = "-")
-  
-  # Get observed ratings
-  observed <- which(!is.na(normalized_matrix), arr.ind = TRUE)
-  
-  # Create training data
-  train_data <- data.frame(
-    user_id = rownames(user_item_matrix)[observed[, 1]],
-    book_id = colnames(user_item_matrix)[observed[, 2]],
-    rating = as.numeric(normalized_matrix[observed])
-  )
-  
-  return(list(
-    train_data = train_data,
-    user_ids = data.frame(user_id = rownames(user_item_matrix)),
-    book_ids = data.frame(book_id = colnames(user_item_matrix)),
-    n_users = nrow(user_item_matrix),
-    n_items = ncol(user_item_matrix),
-    user_means = user_means,
-    original_matrix = user_item_matrix
-  ))
-}
-```
-
-
-```{r nn-tuning}
-# ================================================================
-# HYPERPARAMETER TUNING
-# ================================================================
-
-# Initialize H2O cluster
-h2o.init(nthreads = -1, max_mem_size = "4G")
-
-# Use unified matrix for consistency across all methods
-user_item_matrix_nn <- user_item_matrix
-
-# Prepare data for hyperparameter tuning 
-h2o_data_tuning <- prepare_h2o_data(user_item_matrix_nn)
-
-# Convert training data to H2O frame for grid search
-train_h2o_tuning <- as.h2o(h2o_data_tuning$train_data)
-train_h2o_tuning$user_id <- as.factor(train_h2o_tuning$user_id)
-train_h2o_tuning$book_id <- as.factor(train_h2o_tuning$book_id)
-
-
-# Define search space
-hyper_params <- list(
-  activation = c("Rectifier", "Tanh"),
-  hidden = list(c(64, 32), c(128, 64)),
-  l1 = c(1e-5),
-  l2 = c(1e-5)
-)
-
-set.seed(123)
-
-model_grid <- h2o.grid(
-  algorithm = "deeplearning",
-  grid_id = "nn_grid_book_recommendations",
-  hyper_params = hyper_params,
-  x = c("user_id", "book_id"),
-  y = "rating",
-  training_frame = train_h2o_tuning,
-  nfolds = 5,
-  stopping_metric = "RMSE",
-  stopping_rounds = 3,
-  stopping_tolerance = 0.001,
-  seed = 123,
-  adaptive_rate = TRUE
-)
-
-# Sort by RMSE
-grid_results <- h2o.getGrid("nn_grid_book_recommendations", sort_by = "rmse", decreasing = FALSE)
-top_models_df <- as.data.frame(grid_results@summary_table)
-
-kable(head(top_models_df, 5), caption = "Top 5 Neural Network Models (H2O Grid Search)") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
-
-# Best model
-best_model_id <- grid_results@model_ids[[1]]
-best_model <- h2o.getModel(best_model_id)
-cv_rmse <- h2o.rmse(best_model, xval = TRUE)
-
-best_nn_results <- data.frame(
-  Activation = best_model@allparameters$activation,
-  Hidden_Layers = paste(best_model@allparameters$hidden, collapse = ", "),
-  L1_Regularisation = best_model@allparameters$l1,
-  L2_Regularisation = best_model@allparameters$l2,
-  CV_RMSE = round(cv_rmse, 3)
-)
-
-kable(best_nn_results, caption = "Best Neural Network Model Specifications") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
-
-
-save(best_nn_results, file = 'best_nn_results.Rdata')
-load('best_nn_results.Rdata')
-```
-
-
-```{r nn-training}
-# ================================================================
-# MODEL TRAINING
-# ================================================================
-
-train_h2o_model <- function(train_data,
-                            hidden = c(64, 32),
-                            epochs = 30,
-                            activation = "Rectifier",
-                            hidden_dropout_ratios = c(0.3, 0.3),
-                            l1 = 0.00001,
-                            l2 = 0.00001,
-                            adaptive_rate = TRUE,
-                            rate = 0.001,
-                            seed = 123,
-                            verbose = TRUE) {
-  
-  h2o.no_progress()
-  
-  features <- c("user_id", "book_id")
-  response <- "rating"
-  
-  model <- h2o.deeplearning(
-    x = features,
-    y = response,
-    training_frame = train_data,
-    hidden = hidden,
-    epochs = epochs,
-    activation = activation,
-    hidden_dropout_ratios = hidden_dropout_ratios,
-    l1 = l1,
-    l2 = l2,
-    adaptive_rate = adaptive_rate,
-    rate = rate,
-    seed = seed,
-    verbose = verbose
-  )
-  
-  return(model)
-}
-```
-
-
-
-
-```{r}
-# ================================================================
-# FINAL MODEL TRAINING & RECOMMENDATION
-# ================================================================
-
-prepared <- prepare_h2o_data(user_item_matrix_nn)
-
-optimal_params_nn <- list(
-  hidden = best_model@allparameters$hidden,
-  epochs = ifelse(is.null(best_model@allparameters$epochs), 30, best_model@allparameters$epochs),
-  activation = best_model@allparameters$activation,
-  hidden_dropout_ratios = ifelse(is.null(best_model@allparameters$hidden_dropout_ratios), list(NULL), best_model@allparameters$hidden_dropout_ratios),
-  l1 = best_model@allparameters$l1,
-  l2 = best_model@allparameters$l2
-)
-
-train_h2o <- as.h2o(prepared$train_data)
-train_h2o$user_id <- as.factor(train_h2o$user_id)
-train_h2o$book_id <- as.factor(train_h2o$book_id)
-
-model_nn <- train_h2o_model(
-  train_data = train_h2o,
-  hidden = optimal_params_nn$hidden,
-  epochs = optimal_params_nn$epochs,
-  activation = optimal_params_nn$activation,
-  hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios[[1]],
-  l1 = optimal_params_nn$l1,
-  l2 = optimal_params_nn$l2,
-  verbose = FALSE
-)
-
-```
-
-
-
-```{r nn-recommendation-functions}
-# ================================================================
-# RECOMMENDATION FUNCTIONS
-# ================================================================
-
-# Function to recommend for existing users
-recommend_for_user_nn <- function(model, user_item_matrix, user_id,
-                                  n_recommendations = 10,
-                                  user_ids, book_ids, user_means, book_info) {
-  
-  # Validate user_id
-  if (!user_id %in% user_ids$user_id) {
-    stop("User ID not found in the training data.")
-  }
-  
-  # Extract unrated books for the given user
-  user_row <- user_item_matrix[as.character(user_id), , drop = TRUE]
-  unrated_books <- which(is.na(user_row))
-  
-  # If the user has rated all books, return empty data frame
-  if (length(unrated_books) == 0) {
-    message("User has rated all available books — no new recommendations.")
-    return(data.frame())
-  }
-  
-  # Prepare prediction input
-  pred_data <- data.frame(
-    user_id = rep(user_id, length(unrated_books)),
-    book_id = colnames(user_item_matrix)[unrated_books],
-    stringsAsFactors = FALSE
-  )
-  
-  # Convert to H2O frame
-  pred_h2o <- as.h2o(pred_data)
-  pred_h2o$user_id <- as.factor(pred_h2o$user_id)
-  pred_h2o$book_id <- as.factor(pred_h2o$book_id)
-  
-  # Predict ratings
-  predictions <- h2o.predict(model, pred_h2o)
-  predictions_df <- as.data.frame(predictions)
-  
-  # Denormalize predictions (add back user mean)
-  user_mean <- user_means[as.character(user_id)]
-  pred_ratings <- predictions_df$predict + user_mean
-  
-  # Ensure valid rating bounds
-  pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
-  
-  # Select top-N recommendations
-  n_to_recommend <- min(n_recommendations, length(pred_ratings))
-  top_indices <- order(pred_ratings, decreasing = TRUE)[1:n_to_recommend]
-  
-  # Create final recommendation table
-  recommendations <- data.frame(
-    ISBN = pred_data$book_id[top_indices],
-    Predicted_Rating = round(pred_ratings[top_indices], 2)
-  )
-  
-  recommendations <- recommendations %>%
-    left_join(book_info, by = "ISBN") %>%
-    select(ISBN, Book.Title, Book.Author, Predicted_Rating)
-  
-  return(recommendations)
-}
-
-
-
-# Function to recommend for new users (cold start problem)
-recommend_for_new_user_nn <- function(model, new_user_ratings, book_ids,
-                                      book_info, n_recommendations = 10, 
-                                      user_means = NULL) {
-  
-........
-}
-```
-
-
-
-
-```{r cross-validation-nn}
-# ================================================================
-# CROSS-VALIDATION FOR NEURAL NETWORK
-# ================================================================
-
-cross_validate_nn <- function(user_item_matrix, n_folds = 5, seed = 123, 
-                               hidden = c(64, 32), epochs = 20, 
-                               activation = "Rectifier",
-                               hidden_dropout_ratios = NULL,
-                               l1 = 0.00001, l2 = 0.00001) {
-  
-  set.seed(seed)
-  h2o.no_progress()
-  
-  # Get observed ratings (RAW matrix, no normalization yet)
-  observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-  n_ratings <- nrow(observed)
-  
-  if (n_ratings < n_folds * 2) {
-    stop("Not enough ratings for cross-validation")
-  }
-  
-  # Create folds
-  fold_indices <- sample(rep(1:n_folds, length.out = n_ratings))
-  
-  cv_results <- data.frame(
-    fold = integer(n_folds),
-    rmse = numeric(n_folds)
-  )
-  
-  cat("Starting", n_folds, "-fold cross-validation for Neural Network...\n")
-  
-  for (fold in 1:n_folds) {
-    cat("Fold", fold, "of", n_folds, "... ")
-    
-    # Split data FIRST
-    test_indices <- which(fold_indices == fold)
-    train_indices <- which(fold_indices != fold)
-    
-    test_obs <- observed[test_indices, , drop = FALSE]
-    train_obs <- observed[train_indices, , drop = FALSE]
-    
-    # Create train matrix
-    train_matrix <- user_item_matrix
-    train_matrix[test_obs] <- NA
-    
-    # NOW normalize only the training data (prevents data leakage)
-    train_user_means <- rowMeans(train_matrix, na.rm = TRUE)
-    train_normalized <- sweep(train_matrix, 1, train_user_means, FUN = "-")
-    
-    # Create training data with normalized ratings
-    train_data <- data.frame(
-      user_id = rownames(user_item_matrix)[train_obs[, 1]],
-      book_id = colnames(user_item_matrix)[train_obs[, 2]],
-      rating = as.numeric(train_normalized[train_obs])
-    )
-    
-    # Create test data with original ratings (for proper evaluation)
-    test_data <- data.frame(
-      user_id = rownames(user_item_matrix)[test_obs[, 1]],
-      book_id = colnames(user_item_matrix)[test_obs[, 2]],
-      rating = as.numeric(user_item_matrix[test_obs])
-    )
-    
-    # Convert to H2O frames
-    train_h2o <- as.h2o(train_data)
-    test_h2o <- as.h2o(test_data)
-    train_h2o$user_id <- as.factor(train_h2o$user_id)
-    train_h2o$book_id <- as.factor(train_h2o$book_id)
-    test_h2o$user_id <- as.factor(test_h2o$user_id)
-    test_h2o$book_id <- as.factor(test_h2o$book_id)
-    
-    # Train model with specified hyperparameters
-    model <- train_h2o_model(
-      train_data = train_h2o,
-      hidden = hidden,
-      epochs = epochs,
-      activation = activation,
-      hidden_dropout_ratios = hidden_dropout_ratios,
-      l1 = l1,
-      l2 = l2,
-      verbose = FALSE
-    )
-    
-    # Evaluate (with proper denormalization using training user means)
-    predictions <- as.data.frame(h2o.predict(model, test_h2o))
-    test_data_df <- as.data.frame(test_h2o)
-    
-    # Denormalize
-    user_ids_for_test <- as.character(test_data_df$user_id)
-    user_means_for_test <- train_user_means[user_ids_for_test]
-    predictions_df <- predictions
-    predictions_df$predict <- predictions_df$predict + user_means_for_test
-    
-    predictions_df$predict <- pmax(pmin(predictions_df$predict, 10), 1)
-    
-    actual <- test_data_df$rating
-    metrics <- evaluate_predictions(predictions_df$predict, actual)
-    
-    cv_results[fold, ] <- list(fold, metrics$rmse)
-    
-    # Clear model to free memory
-    h2o.rm(model)
-    h2o.rm(train_h2o)
-    h2o.rm(test_h2o)
-    gc()
-  }
-  
-  return(cv_results)
-}
-```
-
-
-
-```{r nn-implementation}
-# ================================================================
-# NEURAL NETWORK IMPLEMENTATION
-# ================================================================
-
-# Prepare data for final model using unified matrix
-prepared <- prepare_h2o_data(user_item_matrix_nn)
-
-cat("Data prepared for Neural Network:\n")
-cat("Users:", prepared$n_users, "\n")
-cat("Items:", prepared$n_items, "\n")
-cat("Ratings:", nrow(prepared$train_data), "\n\n")
-
-# Extract optimal parameters from grid search results
-optimal_params_nn <- list(
-  hidden = best_model@allparameters$hidden,
-  epochs = best_model@allparameters$epochs,
-  activation = best_model@allparameters$activation,
-  hidden_dropout_ratios = best_model@allparameters$hidden_dropout_ratios,
-  l1 = best_model@allparameters$l1,
-  l2 = best_model@allparameters$l2
-)
-
-cat("Using optimal parameters:\n")
-print(optimal_params_nn)
-
-# Cross-Validation with optimal parameters
-nn_cv_results <- cross_validate_nn(
-  user_item_matrix_nn, 
-  n_folds = 5,
-  hidden = optimal_params_nn$hidden,
-  epochs = optimal_params_nn$epochs,
-  activation = optimal_params_nn$activation,
-  hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
-  l1 = optimal_params_nn$l1,
-  l2 = optimal_params_nn$l2
-)
-
-# Display cross-validation results
-nn_cv_results %>%
-  kable(caption = "Neural Network Cross-Validation Results", 
-        digits = 4, 
-        col.names = c("Fold", "RMSE"),
-        align = c("c", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-# Train Final Model for Recommendations
-cat("\nTraining final model with optimal parameters...\n")
-
-# Convert training data to H2O frame
-train_h2o <- as.h2o(prepared$train_data)
-train_h2o$user_id <- as.factor(train_h2o$user_id)
-train_h2o$book_id <- as.factor(train_h2o$book_id)
-
-# Train final model with optimal parameters
-model_nn <- train_h2o_model(
-  train_data = train_h2o,
-  hidden = optimal_params_nn$hidden,
-  epochs = optimal_params_nn$epochs,
-  activation = optimal_params_nn$activation,
-  hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
-  l1 = optimal_params_nn$l1,
-  l2 = optimal_params_nn$l2,
-  verbose = FALSE
-)
-
-cat("Model training complete!\n\n")
-```
-
-
-```{r nn-recommendations}
-# ================================================================
-# GENERATE RECOMMENDATIONS
-# ================================================================
-
-### RECOMMENDATIONS FOR EXISTING USER
-sample_user <- rownames(user_item_matrix_nn)[3]
-
-recs_nn <- recommend_for_user_nn(
-  model = model_nn,
-  user_item_matrix = user_item_matrix_nn,
-  user_id = sample_user,
-  n_recommendations = 10,
-  user_ids = prepared$user_ids,
-  book_ids = prepared$book_ids,
-  user_means = prepared$user_means,
-  book_info = book_info
-)
-
-recs_nn %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for Existing User (Neural Network)", 
-        digits = 2, align = c("c", "l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-
-### RECOMMENDATIONS FOR NEW USER
-
-# Simulate new user with 5 book ratings
-sample_books <- colnames(user_item_matrix_nn)[1:5]
-new_user_ratings <- setNames(c(8, 9, 7, 6, 8), sample_books)
-
-# Display new user's ratings
-new_user_ratings_df <- data.frame(
-  ISBN = names(new_user_ratings),
-  Rating = as.numeric(new_user_ratings)
-) %>%
-  left_join(book_info, by = "ISBN") %>%
-  select(Book.Title, Book.Author, Rating)
-
-new_user_ratings_df %>%
-  kable(caption = "New User's Initial Ratings", 
-        digits = 0, align = c("l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-# Get recommendations for new user
-new_user_recs_nn <- recommend_for_new_user_nn(
-  model = model_nn,
-  new_user_ratings = new_user_ratings,
-  book_ids = prepared$book_ids,
-  book_info = book_info,
-  n_recommendations = 10,
-  user_means = prepared$user_means
-)
-
-new_user_recs_nn %>%
-  mutate(Rank = row_number()) %>%
-  select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for New User (Neural Network)", 
-        digits = 2, align = c("c", "l", "l", "c")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
-                full_width = FALSE)
-
-# Clean up H2O cluster
-h2o.shutdown(prompt = FALSE)
-```
-
-
-
-
-# 5. Results and Analysis
-
-## 5.1 Cross-Validation Performance Analysis
-
-```{r comprehensive-cv-comparison}
-# ================================================================
-# PART 3: COMPREHENSIVE CROSS-VALIDATION COMPARISON
-# ================================================================
-
-run_comprehensive_cv_comparison <- function(user_item_matrix, n_folds = 5, optimal_params_mf, optimal_params_nn, k = 50) {
-  
-  # Initialize H2O cluster once for all neural network operations
-  h2o.init(nthreads = -1, max_mem_size = "4G")
-  h2o.no_progress()
-  
-  # Pre-allocate results dataframe
-  all_results <- data.frame(
-    Method = character(4),
-    CV_RMSE_Mean = numeric(4),
-    CV_RMSE_SD = numeric(4)
-  )
-  
-  # User-Based CF
-  ubcf_cv <- cross_validate_ubcf(user_item_matrix, n_folds = n_folds, k = k)
-  all_results[2, ] <- list(
-    "User-Based CF",
-    round(mean(ubcf_cv$rmse), 3),
-    round(sd(ubcf_cv$rmse), 3)
-  )
-  
-  # Item-Based CF
-  ibcf_cv <- cross_validate_ibcf(user_item_matrix, n_folds = n_folds, k = k)
-  all_results[1, ] <- list(
-    "Item-Based CF",
-    round(mean(ibcf_cv$rmse), 3),
-    round(sd(ibcf_cv$rmse), 3)
-  )
-  
-  # Matrix Factorization
-  mf_cv_results <- cross_validate_mf(
-    user_item_matrix, 
-    n_folds = n_folds,
-    n_factors = optimal_params_mf$min$dim,
-    learning_rate = optimal_params_mf$min$lrate,
-    costp_l2 = optimal_params_mf$min$costp_l2,
-    costq_l2 = optimal_params_mf$min$costq_l2,
-    n_iter = 50
-  )
-  all_results[3, ] <- list(
-    "Matrix Factorization",
-    round(mean(mf_cv_results$rmse), 3),
-    round(sd(mf_cv_results$rmse), 3)
-  )
-  
-  # Neural Network
-  nn_cv_results <- cross_validate_nn(
-    user_item_matrix, 
-    n_folds = n_folds,
-    hidden = optimal_params_nn$hidden,
-    epochs = optimal_params_nn$epochs,
-    activation = optimal_params_nn$activation,
-    hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
-    l1 = optimal_params_nn$l1,
-    l2 = optimal_params_nn$l2
-  )
-  
-  all_results[4, ] <- list(
-    "Neural Network",
-    round(mean(nn_cv_results$rmse), 3),
-    round(sd(nn_cv_results$rmse), 3)
-  )
-  
-  # Clean up H2O cluster
-  h2o.shutdown(prompt = FALSE)
-  
-  return(all_results)
-}
-
-
-# Use the unified matrix created earlier for fair comparison across all methods
-cat("Using unified matrix for comprehensive comparison:\n")
-cat("Matrix dimensions:", nrow(user_item_matrix), "users x", ncol(user_item_matrix), "items\n")
-cat("Matrix sparsity:", round(mean(is.na(user_item_matrix)) * 100, 2), "%\n\n")
-
-# Ensure optimal parameters are available for comparison
-# If not already defined from previous chunks, create default values
-if (!exists("optimal_params_mf")) {
-  optimal_params_mf <- list(
-    min = list(
-      dim = 20,
-      lrate = 0.1,
-      costp_l2 = 0.01,
-      costq_l2 = 0.01
-    )
-  )
-  cat("Using default Matrix Factorization parameters\n")
-}
-
-if (!exists("optimal_params_nn")) {
-  optimal_params_nn <- list(
-    hidden = c(64, 32),
-    epochs = 20,
-    activation = "Rectifier",
-    hidden_dropout_ratios = c(0.3, 0.3),
-    l1 = 0.00001,
-    l2 = 0.00001
-  )
-  cat("Using default Neural Network parameters\n")
-}
-
-cat("Matrix Factorization parameters:\n")
-print(optimal_params_mf)
-cat("\nNeural Network parameters:\n")
-print(optimal_params_nn)
-cat("\n")
-
-##########################################################
-
-
-# Run the comprehensive comparison using the unified matrix
-cv_comparison_results <- run_comprehensive_cv_comparison(
-  user_item_matrix = user_item_matrix,  
-  n_folds = 5, 
-  optimal_params_mf = optimal_params_mf,
-  optimal_params_nn = optimal_params_nn,
-  k = 50
-)
-
-# Display results in formatted table
-kable(cv_comparison_results, 
-      caption = "Cross-Validation Performance Comparison - All Methods",
-      format = "html") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                full_width = FALSE,
-                position = "center") %>%
-  column_spec(2:3, color = "blue") %>%
-  add_footnote("Note: Lower RMSE values indicate better performance")
-```
-
-
-
-
-## 5.2 Dataset Size Impact Analysis
-
-```{r dataset-size-analysis}
-# ================================================================
-# PART 4: DATASET SIZE VS ACCURACY ANALYSIS (REQUIREMENT 3)
-# ================================================================
-
-# First, identify the best performing method from cross-validation
-if (exists("cv_comparison_results")) {
-  best_method <- cv_comparison_results$Method[which.min(cv_comparison_results$CV_RMSE_Mean)]
-  best_rmse <- min(cv_comparison_results$CV_RMSE_Mean)
-  
-  cat("Best performing method:", best_method, "(RMSE:", best_rmse, ")\n")
-  cat("Using", best_method, "for dataset size analysis\n\n")
-  
-  analyze_dataset_size_impact_best <- function(data, book_sizes = c(30, 60, 90, 120, 150), 
-                                              n_folds = 3, best_method, optimal_params_mf, optimal_params_nn) {
-    
-    # Initialize H2O cluster only if Neural Network is the best method
-    if (best_method == "Neural Network") {
-      h2o.init(nthreads = -1, max_mem_size = "4G")
-      h2o.no_progress()
-    }
-    
-    # Pre-allocate results dataframe for efficiency
-    n_total_results <- length(book_sizes)
-    results <- data.frame(
-      Dataset_Size = integer(n_total_results),
-      Method = character(n_total_results),
-      RMSE = numeric(n_total_results),
-      Users = integer(n_total_results),
-      Books = integer(n_total_results),
-      Sparsity = numeric(n_total_results),
-      stringsAsFactors = FALSE
-    )
-    
-    result_idx <- 1
-    
-    for (n_books in book_sizes) {
-      # Sample books
-      available_books <- unique(data$ISBN)
-      sampled_books <- sample(available_books, min(n_books, length(available_books)))
-      subset_data <- data %>% filter(ISBN %in% sampled_books)
-      
-      # Create matrix
-      subset_matrix <- create_user_item_matrix(
-        subset_data, 
-        min_ratings_per_book = 3, 
-        min_ratings_per_user = 2
-      )
-      
-      n_users <- nrow(subset_matrix)
-      n_items <- ncol(subset_matrix)
-      sparsity <- round(mean(is.na(subset_matrix)) * 100, 2)
-      
-      # Evaluate only the best method
-      if (best_method == "Item-Based CF") {
-        cv_results <- cross_validate_ibcf(subset_matrix, n_folds = n_folds, k = 30)
-      } else if (best_method == "User-Based CF") {
-        cv_results <- cross_validate_ubcf(subset_matrix, n_folds = n_folds, k = 30)
-      } else if (best_method == "Matrix Factorization") {
-        cv_results <- cross_validate_mf(subset_matrix, n_folds = n_folds,
-                                       n_factors = optimal_params_mf$min$dim,
-                                       learning_rate = optimal_params_mf$min$lrate,
-                                       costp_l2 = optimal_params_mf$min$costp_l2,
-                                       costq_l2 = optimal_params_mf$min$costq_l2,
-                                       n_iter = 50)
-      } else if (best_method == "Neural Network") {
-        cv_results <- cross_validate_nn(subset_matrix, n_folds = n_folds, 
-                                       hidden = optimal_params_nn$hidden,
-                                       epochs = optimal_params_nn$epochs,
-                                       activation = optimal_params_nn$activation,
-                                       hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
-                                       l1 = optimal_params_nn$l1,
-                                       l2 = optimal_params_nn$l2)
-      }
-      
-      results[result_idx, ] <- list(n_books, best_method, round(mean(cv_results$rmse), 3), n_users, n_items, sparsity)
-      result_idx <- result_idx + 1
-    }
-    
-    # Clean up H2O cluster if it was initialized
-    if (best_method == "Neural Network") {
-      h2o.shutdown(prompt = FALSE)
-    }
-    
-    return(results)
-  }
-  
-  # Run dataset size analysis for best method only
-  dataset_size_results <- analyze_dataset_size_impact_best(data, 
-                                                           book_sizes = c(30, 60, 90, 120, 150),
-                                                           n_folds = 3, 
-                                                           best_method = best_method,
-                                                           optimal_params_mf = optimal_params_mf,
-                                                           optimal_params_nn = optimal_params_nn)
-  
-  # Display results in formatted table
-  kable(dataset_size_results, 
-        caption = paste("Dataset Size Impact on Predictive Accuracy -", best_method),
-        format = "html") %>%
-    kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                  full_width = FALSE,
-                  position = "center") %>%
-    column_spec(3, color = "red") %>%
-    add_footnote("Note: Lower RMSE values indicate better performance")
-  
-} else {
-  cat("Cross-validation results not available. Please run the comprehensive comparison first.\n")
-}
-```
-
-
-
-# Discussion
-
-Further work- seperat models for implicit and explicit ratings - combine intellegently
-.....
