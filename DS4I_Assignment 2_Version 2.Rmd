@@ -1919,10 +1919,10 @@ Neural networks can learn complex non-linear relationships between users and ite
 
 ```{r nn-data-preparation}
 # ================================================================
-# DATA PREPARATION FOR H2O WITH IMPLICIT RATINGS & CONFIDENCE
+# DATA PREPARATION FOR H2O WITH IMPLICIT RATINGS
 # ================================================================
 
-prepare_h2o_data <- function(user_item_matrix, confidence_matrix = NULL, original_ratings_matrix = NULL) {
+prepare_h2o_data <- function(user_item_matrix, original_ratings_matrix = NULL) {
   
   # Apply user-mean normalization
   user_means <- rowMeans(user_item_matrix, na.rm = TRUE)
@@ -1931,20 +1931,12 @@ prepare_h2o_data <- function(user_item_matrix, confidence_matrix = NULL, origina
   # Get observed ratings
   observed <- which(!is.na(normalized_matrix), arr.ind = TRUE)
 
-  # Create training data with confidence and original rating information
+  # Create training data
   train_data <- data.frame(
     user_id = rownames(user_item_matrix)[observed[, 1]],
     book_id = colnames(user_item_matrix)[observed[, 2]],
     rating = as.numeric(normalized_matrix[observed])
   )
-  
-  # Add confidence scores if provided
-  if (!is.null(confidence_matrix)) {
-    train_data$confidence <- as.numeric(confidence_matrix[observed])
-  } else {
-    # Default confidence of 1.0 for all ratings
-    train_data$confidence <- 1.0
-  }
   
   # Add original rating information if provided
   if (!is.null(original_ratings_matrix)) {
@@ -1963,7 +1955,6 @@ prepare_h2o_data <- function(user_item_matrix, confidence_matrix = NULL, origina
     n_items = ncol(user_item_matrix),
     user_means = user_means,
     original_matrix = user_item_matrix,
-    confidence_matrix = confidence_matrix,
     original_ratings_matrix = original_ratings_matrix
   ))
 }
@@ -1972,14 +1963,13 @@ prepare_h2o_data <- function(user_item_matrix, confidence_matrix = NULL, origina
 
 ```{r nn-tuning}
 # ================================================================
-# HYPERPARAMETER TUNING WITH CONFIDENCE WEIGHTING
+# HYPERPARAMETER TUNING - COMPREHENSIVE APPROACH
 # ================================================================
 
 # Initialize H2O cluster
 h2o.init(nthreads = -1, max_mem_size = "4G")
 
 # Create matrices with implicit feedback handling for Neural Network
-# (consistent with other methods)
 matrix_result_nn <- create_user_item_matrix(
   data,
   min_ratings_per_book = 5,  
@@ -1989,120 +1979,261 @@ matrix_result_nn <- create_user_item_matrix(
 )
 
 user_item_matrix_nn <- matrix_result_nn$ratings
-confidence_matrix_nn <- matrix_result_nn$confidence
 original_ratings_matrix_nn <- matrix_result_nn$original_ratings
 
-# Prepare data for hyperparameter tuning with confidence
-h2o_data_tuning <- prepare_h2o_data(user_item_matrix_nn, confidence_matrix_nn, original_ratings_matrix_nn)
+# Prepare data for hyperparameter tuning
+h2o_data_tuning <- prepare_h2o_data(user_item_matrix_nn, original_ratings_matrix_nn)
 
-# Convert training data to H2O frame for grid search
-train_h2o_tuning <- as.h2o(h2o_data_tuning$train_data)
+# Filter to explicit ratings only
+train_data_explicit <- h2o_data_tuning$train_data[!h2o_data_tuning$train_data$is_implicit, ]
+
+cat("Neural Network training on EXPLICIT ratings only\n")
+cat("- Total ratings in matrix:", sum(!is.na(user_item_matrix_nn)), "\n")
+cat("- Explicit ratings used:", nrow(train_data_explicit), "\n")
+cat("- Implicit ratings excluded:", sum(h2o_data_tuning$train_data$is_implicit), "\n\n")
+
+# Convert training data to H2O frame
+train_h2o_tuning <- as.h2o(train_data_explicit[, c("user_id", "book_id", "rating")])
 train_h2o_tuning$user_id <- as.factor(train_h2o_tuning$user_id)
 train_h2o_tuning$book_id <- as.factor(train_h2o_tuning$book_id)
 
-# Use confidence as an input feature instead of sample duplication
-# This is a much cleaner approach that lets the neural network learn
-# how to handle different confidence levels
-cat("Using confidence as input feature for neural network training\n")
-cat("Confidence statistics:\n")
-cat("- Mean confidence:", round(mean(as.data.frame(train_h2o_tuning)$confidence), 3), "\n")
-cat("- Min confidence:", round(min(as.data.frame(train_h2o_tuning)$confidence), 3), "\n")
-cat("- Max confidence:", round(max(as.data.frame(train_h2o_tuning)$confidence), 3), "\n\n")
+# ================================================================
+# SMART GRID SEARCH: Test network architectures systematically
+# ================================================================
 
-# Use all training data with confidence as a feature
-train_h2o_weighted <- train_h2o_tuning
+cat("Grid Search Strategy:\n")
+cat("1. Architecture: Test shallow to deep networks\n")
+cat("2. Activation: Test Tanh (stable) vs Rectifier (powerful)\n")
+cat("3. Regularization: Test weak to strong L1/L2\n")
+cat("4. No dropout (requires specific activation functions)\n\n")
 
-# Define search space - only Tanh and Rectifier activation functions
+# IMPROVED: More comprehensive architecture search
 hyper_params <- list(
-  activation = c("Rectifier", "Tanh"),
-  hidden = list(c(64, 32), c(128, 64)),
-  l1 = c(1e-5),
-  l2 = c(1e-5)
+  # Test 2 activation functions
+  activation = c("Tanh", "Rectifier"),
+  
+  # Test 5 different architectures (shallow → deep, narrow → wide)
+  hidden = list(
+    c(16),           # Very shallow: just 1 layer (baseline)
+    c(32, 16),       # Shallow: 2 layers, decreasing
+    c(64, 32),       # Medium: 2 layers, decreasing  
+    c(64, 32, 16),   # Deep: 3 layers, decreasing
+    c(128, 64, 32)   # Very deep: 3 layers, wider
+  ),
+  
+  # Test 2 levels of L1 regularization (feature selection)
+  l1 = c(0.00001, 0.0001),
+  
+  # Test 2 levels of L2 regularization (weight decay)
+  l2 = c(0.00001, 0.0001)
+  
+  # NOTE: Removed hidden_dropout_ratios as it requires specific activation functions
+  # like RectifierWithDropout, TanhWithDropout, etc.
 )
+
+# Calculate total number of models to train
+n_models <- length(hyper_params$activation) * 
+            length(hyper_params$hidden) * 
+            length(hyper_params$l1) * 
+            length(hyper_params$l2)
+
+cat(sprintf("Total models to train: %d\n", n_models))
+cat("Estimated time: ~%d minutes (depending on your hardware)\n\n", n_models * 2)
 
 set.seed(123)
 
+# Run grid search
 model_grid <- h2o.grid(
   algorithm = "deeplearning",
   grid_id = "nn_grid_book_recommendations",
   hyper_params = hyper_params,
-  x = c("user_id", "book_id", "confidence"),  # Include confidence as input feature
+  x = c("user_id", "book_id"),
   y = "rating",
-  training_frame = train_h2o_weighted,
+  training_frame = train_h2o_tuning,
   nfolds = 5,
   stopping_metric = "RMSE",
-  stopping_rounds = 3,
+  stopping_rounds = 5,              # Increased for deeper networks
   stopping_tolerance = 0.001,
   seed = 123,
-  adaptive_rate = TRUE
+  adaptive_rate = TRUE,
+  epochs = 50,                      # Increase max epochs for deeper nets
+  max_w2 = 10,                      # Weight constraint for stability
+  initial_weight_distribution = "UniformAdaptive"
 )
 
-# Sort by RMSE
-grid_results <- h2o.getGrid("nn_grid_book_recommendations", sort_by = "rmse", decreasing = FALSE)
-top_models_df <- as.data.frame(grid_results@summary_table)
+# ================================================================
+# ANALYZE RESULTS
+# ================================================================
 
-kable(head(top_models_df, 5), caption = "Top 5 Neural Network Models (H2O Grid Search with Confidence)") %>%
+cat("\n=== GRID SEARCH RESULTS ===\n")
+
+# Get all results sorted by RMSE
+grid_results <- h2o.getGrid(
+  "nn_grid_book_recommendations", 
+  sort_by = "rmse", 
+  decreasing = FALSE
+)
+
+# Convert to data frame for analysis
+all_models_df <- as.data.frame(grid_results@summary_table)
+
+# Display top 10 models
+cat("\nTop 10 Best Models:\n")
+kable(head(all_models_df, 10), 
+      caption = "Top 10 Neural Network Models (H2O Grid Search)") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+# ================================================================
+# ARCHITECTURE ANALYSIS: Which network depth works best?
+# ================================================================
+
+cat("\n=== ARCHITECTURE ANALYSIS ===\n")
+
+# Extract number of layers from each model
+all_models_df$n_layers <- sapply(strsplit(as.character(all_models_df$hidden), ","), length)
+
+# Average RMSE by number of layers
+architecture_analysis <- all_models_df %>%
+  group_by(n_layers) %>%
+  summarise(
+    n_models = n(),
+    mean_rmse = mean(as.numeric(rmse), na.rm = TRUE),
+    sd_rmse = sd(as.numeric(rmse), na.rm = TRUE),
+    best_rmse = min(as.numeric(rmse), na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(mean_rmse)
+
+cat("\nPerformance by Network Depth:\n")
+kable(architecture_analysis, 
+      caption = "RMSE by Number of Hidden Layers",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+# ================================================================
+# ACTIVATION FUNCTION ANALYSIS
+# ================================================================
+
+activation_analysis <- all_models_df %>%
+  group_by(activation) %>%
+  summarise(
+    n_models = n(),
+    mean_rmse = mean(as.numeric(rmse), na.rm = TRUE),
+    best_rmse = min(as.numeric(rmse), na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(mean_rmse)
+
+cat("\nPerformance by Activation Function:\n")
+kable(activation_analysis, 
+      caption = "RMSE by Activation Function",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+# ================================================================
+# REGULARIZATION ANALYSIS
+# ================================================================
+
+regularization_analysis <- all_models_df %>%
+  group_by(l1, l2) %>%
+  summarise(
+    n_models = n(),
+    mean_rmse = mean(as.numeric(rmse), na.rm = TRUE),
+    best_rmse = min(as.numeric(rmse), na.rm = TRUE),
+    .groups = 'drop'
+  ) %>%
+  arrange(mean_rmse)
+
+cat("\nPerformance by Regularization:\n")
+kable(regularization_analysis, 
+      caption = "RMSE by L1/L2 Regularization",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+
+# ================================================================
+# SELECT BEST MODEL
+# ================================================================
 
 # Best model
 best_model_id <- grid_results@model_ids[[1]]
 best_model <- h2o.getModel(best_model_id)
 cv_rmse <- h2o.rmse(best_model, xval = TRUE)
 
+cat("\n=== BEST MODEL SELECTED ===\n")
+
 best_nn_results <- data.frame(
   Activation = best_model@allparameters$activation,
   Hidden_Layers = paste(best_model@allparameters$hidden, collapse = ", "),
+  N_Layers = length(best_model@allparameters$hidden),
   L1_Regularisation = best_model@allparameters$l1,
   L2_Regularisation = best_model@allparameters$l2,
-  CV_RMSE = round(cv_rmse, 3),
-  Confidence_Weighted = "Yes"
+  CV_RMSE = round(cv_rmse, 4),
+  Data_Type = "Explicit Only"
 )
 
-kable(best_nn_results, caption = "Best Neural Network Model Specifications (with Confidence Weighting)") %>%
+kable(best_nn_results, 
+      caption = "Best Neural Network Model Specifications") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 
-save(best_nn_results, file = 'best_nn_results.Rdata')
-load('best_nn_results.Rdata')
+# ================================================================
+# VISUALIZE ARCHITECTURE IMPACT
+# ================================================================
+
+# Create visualization of architecture performance
+arch_plot <- ggplot(all_models_df, aes(x = factor(n_layers), y = as.numeric(rmse))) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  geom_jitter(width = 0.2, alpha = 0.3) +
+  labs(
+    title = "Neural Network Performance by Depth",
+    subtitle = "Distribution of RMSE across different network architectures",
+    x = "Number of Hidden Layers",
+    y = "Cross-Validation RMSE"
+  ) +
+  theme_minimal()
+
+print(arch_plot)
+
+# Save results
+save(best_nn_results, grid_results, all_models_df, file = 'nn_tuning_results.Rdata')
+
+cat("\n✓ Grid search complete! Results saved to 'nn_tuning_results.Rdata'\n")
 ```
 
 
 ```{r nn-training}
 # ================================================================
-# MODEL TRAINING WITH CONFIDENCE WEIGHTING
+# MODEL TRAINING FUNCTION - SIMPLE APPROACH
 # ================================================================
 
 train_h2o_model <- function(train_data,
                             hidden = c(64, 32),
                             epochs = 30,
-                            activation = "Rectifier",
-                            hidden_dropout_ratios = NULL,
-                            l1 = 0.00001,
-                            l2 = 0.00001,
-                            adaptive_rate = TRUE,
-                            rate = 0.001,
+                            activation = "Tanh",
+                            l1 = 0.0001,
+                            l2 = 0.0001,
                             seed = 123,
-                            verbose = TRUE) {
+                            verbose = FALSE) {
   
-  h2o.no_progress()
+  if (!verbose) h2o.no_progress()
   
-  # Always use confidence as input feature (assume it's always available)
-  features <- c("user_id", "book_id", "confidence")
-  cat("Using confidence as input feature\n")
-  
-  response <- "rating"
-  
+  # Simple neural network training on explicit ratings
   model <- h2o.deeplearning(
-    x = features,
-    y = response,
+    x = c("user_id", "book_id"),
+    y = "rating",
     training_frame = train_data,
     hidden = hidden,
     epochs = epochs,
     activation = activation,
     l1 = l1,
     l2 = l2,
-    adaptive_rate = adaptive_rate,
+    adaptive_rate = TRUE,
     seed = seed,
-    verbose = verbose
+    stopping_rounds = 5,
+    stopping_metric = "RMSE",
+    stopping_tolerance = 0.001,
+    max_w2 = 10,  # Weight constraint for stability
+    initial_weight_distribution = "UniformAdaptive",
+    initial_weight_scale = 0.5
   )
   
   return(model)
@@ -2120,11 +2251,10 @@ train_h2o_model <- function(train_data,
 # RECOMMENDATION FUNCTIONS
 # ================================================================
 
-# Function to recommend for existing users with confidence awareness
+# Function to recommend for existing users
 recommend_for_user_nn <- function(model, user_item_matrix, user_id,
                                   n_recommendations = 10,
-                                  user_ids, book_ids, user_means, book_info,
-                                  confidence_matrix = NULL) {
+                                  user_ids, book_ids, user_means, book_info) {
   
   # Validate user_id
   if (!user_id %in% user_ids$user_id) {
@@ -2141,11 +2271,10 @@ recommend_for_user_nn <- function(model, user_item_matrix, user_id,
     return(data.frame())
   }
   
-  # Prepare prediction input with confidence
+  # Prepare prediction input
   pred_data <- data.frame(
     user_id = rep(user_id, length(unrated_books)),
     book_id = colnames(user_item_matrix)[unrated_books],
-    confidence = 0.5,  # Default confidence for unrated items
     stringsAsFactors = FALSE
   )
   
@@ -2162,8 +2291,7 @@ recommend_for_user_nn <- function(model, user_item_matrix, user_id,
   user_mean <- user_means[as.character(user_id)]
   pred_ratings <- predictions_df$predict + user_mean
   
-  # Confidence is now handled as an input feature, so no post-processing needed
-  # The neural network has learned to incorporate confidence directly
+  # Standard neural network prediction - no confidence post-processing needed
   
   # Ensure valid rating bounds
   pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
@@ -2188,19 +2316,20 @@ recommend_for_user_nn <- function(model, user_item_matrix, user_id,
 
 
 # Function to recommend for new users (cold start problem)
-recommend_for_new_user_nn <- function(model, new_user_ratings, book_ids,
-                                      book_info, n_recommendations = 10, 
-                                      user_means = NULL) {
-  
-  # For neural networks, we need to use a hybrid approach since 
-  # the model requires existing user factors
+
+recommend_for_new_user_nn <- function(model, 
+                                              new_user_ratings, 
+                                              user_item_matrix,
+                                              book_ids,
+                                              book_info, 
+                                              n_recommendations = 10,
+                                              user_means = NULL) {
   
   # Input validation
   if (length(new_user_ratings) == 0) {
     stop("No ratings provided for new user")
   }
   
-  # Check if rated books exist in training data
   rated_books <- names(new_user_ratings)
   valid_books <- rated_books[rated_books %in% book_ids$book_id]
   
@@ -2208,35 +2337,95 @@ recommend_for_new_user_nn <- function(model, new_user_ratings, book_ids,
     stop("None of the rated books exist in training data")
   }
   
-  # Use content-based approach: recommend books similar to highly-rated ones
-  # Calculate average rating for baseline
-  avg_new_user_rating <- mean(new_user_ratings)
-  global_mean <- mean(user_means, na.rm = TRUE)
+  # Strategy: Find similar users based on overlap in rated books
+  # Then use their preferences weighted by similarity
   
-  # Get all unrated books
-  all_books <- book_ids$book_id
-  unrated_books <- setdiff(all_books, rated_books)
+  # 1. Calculate new user's normalized profile
+  new_user_mean <- mean(new_user_ratings)
+  new_user_normalized <- new_user_ratings - new_user_mean
   
-  if (length(unrated_books) == 0) {
-    return(data.frame())
+  # 2. Find existing users who rated similar books
+  user_similarities <- numeric(nrow(user_item_matrix))
+  names(user_similarities) <- rownames(user_item_matrix)
+  
+  for (i in 1:nrow(user_item_matrix)) {
+    # Get overlap in rated books
+    user_ratings <- user_item_matrix[i, valid_books]
+    valid_overlap <- !is.na(user_ratings)
+    
+    if (sum(valid_overlap) == 0) {
+      user_similarities[i] <- 0
+      next
+    }
+    
+    # Calculate cosine similarity on overlapping items
+    overlap_books <- valid_books[valid_overlap]
+    
+    # Normalize existing user's ratings
+    existing_mean <- mean(user_ratings[valid_overlap], na.rm = TRUE)
+    existing_normalized <- user_ratings[valid_overlap] - existing_mean
+    new_normalized <- new_user_normalized[overlap_books]
+    
+    # Cosine similarity
+    numerator <- sum(existing_normalized * new_normalized)
+    denominator <- sqrt(sum(existing_normalized^2)) * sqrt(sum(new_normalized^2))
+    
+    if (denominator > 0) {
+      user_similarities[i] <- numerator / denominator
+    } else {
+      user_similarities[i] <- 0
+    }
   }
   
-  # Simple popularity-based fallback with user bias adjustment
-  # (In practice, you'd want item similarities here)
-  user_bias <- avg_new_user_rating - global_mean
+  # 3. Use top-K similar users to make predictions via the neural network
+  k <- min(30, sum(user_similarities > 0))
   
-  # Create predictions based on global average + user bias
-  pred_ratings <- rep(global_mean + user_bias, length(unrated_books))
-  names(pred_ratings) <- unrated_books
+  if (k == 0) {
+    # Fallback to item popularity
+    item_means <- colMeans(user_item_matrix, na.rm = TRUE)
+    all_books <- book_ids$book_id
+    unrated_books <- setdiff(all_books, rated_books)
+    pred_ratings <- item_means[unrated_books] + (new_user_mean - mean(user_means))
+  } else {
+    # Get top-K similar users
+    top_k_users <- names(sort(user_similarities, decreasing = TRUE)[1:k])
+    similarities <- user_similarities[top_k_users]
+    
+    # Get their predictions for unrated books
+    all_books <- book_ids$book_id
+    unrated_books <- setdiff(all_books, rated_books)
+    
+    # Weighted average of similar users' ratings for unrated items
+    weighted_preds <- numeric(length(unrated_books))
+    names(weighted_preds) <- unrated_books
+    
+    for (book in unrated_books) {
+      # Get ratings from similar users
+      similar_user_ratings <- user_item_matrix[top_k_users, book]
+      valid_ratings <- !is.na(similar_user_ratings)
+      
+      if (sum(valid_ratings) > 0) {
+        weighted_sum <- sum(similarities[valid_ratings] * similar_user_ratings[valid_ratings])
+        sum_weights <- sum(abs(similarities[valid_ratings]))
+        weighted_preds[book] <- weighted_sum / sum_weights
+      } else {
+        # Use item mean
+        weighted_preds[book] <- mean(user_item_matrix[, book], na.rm = TRUE)
+      }
+    }
+    
+    # Adjust for user bias
+    pred_ratings <- weighted_preds + new_user_mean - mean(user_means)
+  }
   
   # Clip predictions
   pred_ratings <- pmax(pmin(pred_ratings, 10), 1)
   
-  # Sort and select top N
+  # Get top recommendations
   top_indices <- order(pred_ratings, decreasing = TRUE)[1:min(n_recommendations, length(pred_ratings))]
   
   recommendations <- data.frame(
-    ISBN = unrated_books[top_indices],
+    ISBN = names(pred_ratings)[top_indices],
     Predicted_Rating = round(pred_ratings[top_indices], 2)
   ) %>%
     left_join(book_info, by = "ISBN") %>%
@@ -2247,38 +2436,30 @@ recommend_for_new_user_nn <- function(model, new_user_ratings, book_ids,
 ```
 
 
-```{r}
+```{r nn-cross-validation}
 # ================================================================
 # CROSS-VALIDATION FOR NEURAL NETWORK
 # ================================================================
+
 cross_validate_nn <- function(user_item_matrix, 
-                             confidence_matrix = NULL,  # Add confidence matrix parameter
-                             n_folds = 5, 
-                             seed = 123, 
-                             hidden = c(64, 32), 
-                             epochs = 20, 
-                             activation = "Rectifier",
-                             hidden_dropout_ratios = NULL,
-                             l1 = 0.00001, 
-                             l2 = 0.00001) {
+                              original_ratings_matrix = NULL,
+                              n_folds = 5, 
+                              seed = 123, 
+                              hidden = c(64, 32), 
+                              epochs = 20, 
+                              activation = "Tanh",
+                              l1 = 0.0001, 
+                              l2 = 0.0001) {
   
   set.seed(seed)
   h2o.no_progress()
   
-  # Handle confidence matrix - if not provided, assume all explicit (confidence = 1)
-  if (is.null(confidence_matrix)) {
-    confidence_matrix <- matrix(1, nrow = nrow(user_item_matrix), ncol = ncol(user_item_matrix))
-    confidence_matrix[is.na(user_item_matrix)] <- NA
-    rownames(confidence_matrix) <- rownames(user_item_matrix)
-    colnames(confidence_matrix) <- colnames(user_item_matrix)
-  }
-  
-  # Get observed ratings (RAW matrix, no normalization yet)
+  # Get observed ratings
   observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
   n_ratings <- nrow(observed)
   
   if (n_ratings < n_folds * 2) {
-    stop("Not enough ratings for cross-validation")
+    stop("Not enough ratings to perform cross-validation.")
   }
   
   # Create folds
@@ -2290,115 +2471,109 @@ cross_validate_nn <- function(user_item_matrix,
   )
   
   cat("Starting", n_folds, "-fold cross-validation for Neural Network...\n")
+  cat("Training on EXPLICIT ratings only (no confidence weighting)\n\n")
   
   for (fold in 1:n_folds) {
     cat("Fold", fold, "of", n_folds, "... ")
     
-    # Split data FIRST
+    # Split data
     test_indices <- which(fold_indices == fold)
     train_indices <- which(fold_indices != fold)
     
     test_obs <- observed[test_indices, , drop = FALSE]
     train_obs <- observed[train_indices, , drop = FALSE]
     
-    # Create train matrix and confidence matrix
+    # Create train matrix
     train_matrix <- user_item_matrix
-    train_conf_matrix <- confidence_matrix
     train_matrix[test_obs] <- NA
-    train_conf_matrix[test_obs] <- NA
     
-    # NOW normalize only the training data (prevents data leakage)
+    # Normalize training data (prevents data leakage)
     train_user_means <- rowMeans(train_matrix, na.rm = TRUE)
     train_normalized <- sweep(train_matrix, 1, train_user_means, FUN = "-")
     
-    # Get confidence values for training data
-    train_conf_values <- train_conf_matrix[train_obs]
-    
-    # Create training data with normalized ratings and confidence weighting
-    # For neural networks, we can duplicate samples based on confidence for implicit weighting
-    train_data_base <- data.frame(
+    # Create training data
+    train_data <- data.frame(
       user_id = rownames(user_item_matrix)[train_obs[, 1]],
       book_id = colnames(user_item_matrix)[train_obs[, 2]],
-      rating = as.numeric(train_normalized[train_obs]),
-      confidence = train_conf_values
+      rating = as.numeric(train_normalized[train_obs])
     )
     
-    # Use confidence as an input feature instead of sample duplication
-    # This is much cleaner and lets the neural network learn confidence patterns
-    train_data <- train_data_base[, c("user_id", "book_id", "rating", "confidence")]
+    # Filter to explicit ratings only
+    if (!is.null(original_ratings_matrix)) {
+      train_data$original_rating <- original_ratings_matrix[train_obs]
+      train_data_explicit <- train_data[train_data$original_rating != 0, ]
+    } else {
+      train_data_explicit <- train_data
+    }
     
-    # Create test data with NORMALIZED ratings for consistency
-    # But we'll evaluate on original scale
-    test_user_means <- train_user_means[rownames(user_item_matrix)[test_obs[, 1]]]
-    test_data_normalized <- data.frame(
-      user_id = rownames(user_item_matrix)[test_obs[, 1]],
-      book_id = colnames(user_item_matrix)[test_obs[, 2]],
-      rating = as.numeric(user_item_matrix[test_obs]) - test_user_means,  # Normalize test data
-      confidence = as.numeric(confidence_matrix[test_obs])  # Add confidence for test data
-    )
+    # Skip if no training data
+    if (nrow(train_data_explicit) == 0) {
+      cv_results[fold, ] <- c(fold, NA)
+      cat("No explicit ratings - skipping\n")
+      next
+    }
     
-    # Keep original ratings for evaluation
-    test_data_original <- data.frame(
-      user_id = rownames(user_item_matrix)[test_obs[, 1]],
-      book_id = colnames(user_item_matrix)[test_obs[, 2]],
-      rating = as.numeric(user_item_matrix[test_obs])
-    )
-    
-    # Convert to H2O frames
-    train_h2o <- as.h2o(train_data)
-    test_h2o <- as.h2o(test_data_normalized)  # Use normalized test data
+    # Convert to H2O (no confidence column)
+    train_h2o <- as.h2o(train_data_explicit[, c("user_id", "book_id", "rating")])
     train_h2o$user_id <- as.factor(train_h2o$user_id)
     train_h2o$book_id <- as.factor(train_h2o$book_id)
-    test_h2o$user_id <- as.factor(test_h2o$user_id)
-    test_h2o$book_id <- as.factor(test_h2o$book_id)
     
-    # Train model with specified hyperparameters and confidence as feature
-    model <- train_h2o_model(
-      train_data = train_h2o,
+    # Train model (no confidence weighting)
+    model <- h2o.deeplearning(
+      x = c("user_id", "book_id"),
+      y = "rating",
+      training_frame = train_h2o,
       hidden = hidden,
       epochs = epochs,
       activation = activation,
-      hidden_dropout_ratios = hidden_dropout_ratios,
       l1 = l1,
       l2 = l2,
+      adaptive_rate = TRUE,
+      seed = seed,
+      stopping_rounds = 3,
+      stopping_tolerance = 0.001,
+      max_w2 = 10,
+      initial_weight_distribution = "UniformAdaptive",
+      initial_weight_scale = 0.5,
       verbose = FALSE
     )
     
-    # Predict on normalized test data
+    # Prepare test data (explicit only)
+    test_user_means <- train_user_means[rownames(user_item_matrix)[test_obs[, 1]]]
+    test_data <- data.frame(
+      user_id = rownames(user_item_matrix)[test_obs[, 1]],
+      book_id = colnames(user_item_matrix)[test_obs[, 2]],
+      rating = as.numeric(user_item_matrix[test_obs]) - test_user_means
+    )
+    
+    if (!is.null(original_ratings_matrix)) {
+      test_data$original_rating <- original_ratings_matrix[test_obs]
+      test_data_explicit <- test_data[test_data$original_rating != 0, ]
+      test_user_means_explicit <- test_user_means[test_data$original_rating != 0]
+      actual_explicit <- user_item_matrix[test_obs][test_data$original_rating != 0]
+    } else {
+      test_data_explicit <- test_data
+      test_user_means_explicit <- test_user_means
+      actual_explicit <- user_item_matrix[test_obs]
+    }
+    
+    # Convert to H2O
+    test_h2o <- as.h2o(test_data_explicit[, c("user_id", "book_id", "rating")])
+    test_h2o$user_id <- as.factor(test_h2o$user_id)
+    test_h2o$book_id <- as.factor(test_h2o$book_id)
+    
+    # Predict
     predictions <- as.data.frame(h2o.predict(model, test_h2o))
-    
-    # Denormalize predictions
-    predictions_denorm <- predictions$predict + test_user_means
-    
-    # Clip to valid range
+    predictions_denorm <- predictions$predict + test_user_means_explicit
     predictions_denorm <- pmax(pmin(predictions_denorm, 10), 1)
     
-    # Calculate RMSE on original scale
-    actual <- test_data_original$rating
-    
-    # Check if evaluate_predictions expects additional parameters
-    # If it needs original ratings for implicit/explicit separation:
-    original_ratings <- user_item_matrix[test_obs]
-    
-    # Try to use evaluate_predictions if it exists, otherwise calculate RMSE directly
-    if (exists("evaluate_predictions") && is.function(evaluate_predictions)) {
-      # Check function signature
-      if (length(formals(evaluate_predictions)) >= 3) {
-        metrics <- evaluate_predictions(predictions_denorm, actual, original_ratings)
-        rmse_value <- ifelse(!is.null(metrics$rmse_explicit), metrics$rmse_explicit, metrics$rmse)
-      } else {
-        metrics <- evaluate_predictions(predictions_denorm, actual)
-        rmse_value <- metrics$rmse
-      }
-    } else {
-      # Direct RMSE calculation
-      rmse_value <- sqrt(mean((predictions_denorm - actual)^2, na.rm = TRUE))
-    }
+    # Calculate RMSE on explicit ratings only
+    rmse_value <- sqrt(mean((predictions_denorm - actual_explicit)^2, na.rm = TRUE))
     
     cv_results[fold, ] <- list(fold, rmse_value)
     cat("RMSE:", round(rmse_value, 4), "\n")
     
-    # Clear model to free memory
+    # Cleanup
     h2o.rm(model)
     h2o.rm(train_h2o)
     h2o.rm(test_h2o)
@@ -2407,7 +2582,6 @@ cross_validate_nn <- function(user_item_matrix,
   
   return(cv_results)
 }
-
 
 ```
 
@@ -2418,49 +2592,59 @@ cross_validate_nn <- function(user_item_matrix,
 # NEURAL NETWORK IMPLEMENTATION
 # ================================================================
 
-# Prepare data for final model with confidence matrices
-prepared <- prepare_h2o_data(user_item_matrix_nn, confidence_matrix_nn, original_ratings_matrix_nn)
+# Prepare data for final model
+prepared <- prepare_h2o_data(user_item_matrix_nn, original_ratings_matrix_nn)
 
-cat("Data prepared for Neural Network with implicit ratings:\n")
+cat("Data prepared for Neural Network:\n")
 cat("Users:", prepared$n_users, "\n")
 cat("Items:", prepared$n_items, "\n")
 cat("Total ratings:", nrow(prepared$train_data), "\n")
 cat("Explicit ratings:", sum(!prepared$train_data$is_implicit), "\n")
-cat("Implicit ratings:", sum(prepared$train_data$is_implicit), "\n")
-cat("Average confidence:", round(mean(prepared$train_data$confidence), 3), "\n\n")
+cat("Implicit ratings:", sum(prepared$train_data$is_implicit), "\n\n")  
 
 
+# Extract optimal parameters from grid search
+# Check if best_model exists, otherwise use default parameters
+if (exists("best_model") && !is.null(best_model)) {
   optimal_params_nn <- list(
     hidden = best_model@allparameters$hidden,
     epochs = ifelse(is.null(best_model@allparameters$epochs), 30, best_model@allparameters$epochs),
     activation = best_model@allparameters$activation,
-    hidden_dropout_ratios = ifelse(is.null(best_model@allparameters$hidden_dropout_ratios), 
-                                   list(c(0.3, 0.3)), 
-                                   best_model@allparameters$hidden_dropout_ratios)[[1]],
     l1 = best_model@allparameters$l1,
     l2 = best_model@allparameters$l2
   )
+} else {
+  # Use default parameters if grid search failed
+  cat("Warning: best_model not found, using default parameters\n")
+  optimal_params_nn <- list(
+    hidden = c(64, 32),
+    epochs = 30,
+    activation = "Tanh",
+    l1 = 0.0001,
+    l2 = 0.0001
+  )
+}
 
 
 cat("Using optimal parameters:\n")
 print(optimal_params_nn)
 
-# Cross-Validation with optimal parameters - INCLUDING CONFIDENCE MATRIX
+# Cross-Validation with optimal parameters
+cat("Running cross-validation...\n")
 nn_cv_results <- cross_validate_nn(
   user_item_matrix_nn,
-  confidence_matrix_nn,  # ADD THIS PARAMETER
+  original_ratings_matrix_nn,
   n_folds = 5,
   hidden = optimal_params_nn$hidden,
   epochs = optimal_params_nn$epochs,
   activation = optimal_params_nn$activation,
-  hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
   l1 = optimal_params_nn$l1,
   l2 = optimal_params_nn$l2
 )
 
 # Display cross-validation results
 nn_cv_results %>%
-  kable(caption = "Neural Network Cross-Validation Results", 
+  kable(caption = "Neural Network Cross-Validation Results (Explicit Ratings Only)", 
         digits = 4, 
         col.names = c("Fold", "RMSE"),
         align = c("c", "c")) %>%
@@ -2469,32 +2653,30 @@ nn_cv_results %>%
 
 # Summary statistics
 cat("\nCross-validation summary:\n")
-cat("Mean RMSE:", round(mean(nn_cv_results$rmse), 4), "\n")
-cat("SD RMSE:", round(sd(nn_cv_results$rmse), 4), "\n\n")
+cat("Mean RMSE:", round(mean(nn_cv_results$rmse, na.rm = TRUE), 4), "\n")
+cat("SD RMSE:", round(sd(nn_cv_results$rmse, na.rm = TRUE), 4), "\n\n")
 
-# Train Final Model for Recommendations with confidence weighting
-cat("Training final model with optimal parameters and confidence weighting...\n")
+# Train Final Model
+cat("Training final model with optimal parameters...\n")
 
-# Use confidence as input feature - much cleaner approach
-train_data_with_conf <- prepared$train_data
-cat("Training with confidence as input feature\n")
-cat("Confidence distribution:\n")
-cat("- Mean:", round(mean(train_data_with_conf$confidence), 3), "\n")
-cat("- Explicit ratings (conf=1.0):", sum(train_data_with_conf$confidence == 1.0), "\n")
-cat("- Implicit ratings (conf=0.5):", sum(train_data_with_conf$confidence == 0.5), "\n\n")
+# Use explicit ratings only (consistent with CV and MF)
+train_data_explicit <- prepared$train_data[!prepared$train_data$is_implicit, ]
 
-# Convert training data to H2O frame
-train_h2o <- as.h2o(train_data_with_conf)
+cat("Final model training data:\n")
+cat("- Explicit ratings:", nrow(train_data_explicit), "\n")
+cat("- No confidence weighting (all explicit ratings weighted equally)\n\n")
+
+# Convert to H2O (no confidence column)
+train_h2o <- as.h2o(train_data_explicit[, c("user_id", "book_id", "rating")])
 train_h2o$user_id <- as.factor(train_h2o$user_id)
 train_h2o$book_id <- as.factor(train_h2o$book_id)
 
-# Train final model with optimal parameters and confidence as feature
+# Train final model
 model_nn <- train_h2o_model(
   train_data = train_h2o,
   hidden = optimal_params_nn$hidden,
   epochs = optimal_params_nn$epochs,
   activation = optimal_params_nn$activation,
-  hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
   l1 = optimal_params_nn$l1,
   l2 = optimal_params_nn$l2,
   verbose = FALSE
@@ -2524,14 +2706,13 @@ recs_nn <- recommend_for_user_nn(
   user_ids = prepared$user_ids,
   book_ids = prepared$book_ids,
   user_means = prepared$user_means,
-  book_info = book_info,
-  confidence_matrix = confidence_matrix_nn  # Include confidence matrix
+  book_info = book_info
 )
 
 recs_nn %>%
   mutate(Rank = row_number()) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for Existing User (Neural Network with Confidence)", 
+  kable(caption = "Top 10 Recommendations for Existing User (Neural Network)", 
         digits = 2, align = c("c", "l", "l", "c")) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
                 full_width = FALSE)
@@ -2557,10 +2738,11 @@ new_user_ratings_df %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
                 full_width = FALSE)
 
-# Get recommendations for new user
+# Get recommendations using similarity-based cold start approach
 new_user_recs_nn <- recommend_for_new_user_nn(
   model = model_nn,
   new_user_ratings = new_user_ratings,
+  user_item_matrix = user_item_matrix_nn,
   book_ids = prepared$book_ids,
   book_info = book_info,
   n_recommendations = 10,
@@ -2570,7 +2752,7 @@ new_user_recs_nn <- recommend_for_new_user_nn(
 new_user_recs_nn %>%
   mutate(Rank = row_number()) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
-  kable(caption = "Top 10 Recommendations for New User (Neural Network with Confidence)", 
+  kable(caption = "Top 10 Recommendations for New User (Similarity-Based Cold Start)", 
         digits = 2, align = c("c", "l", "l", "c")) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), 
                 full_width = FALSE)
@@ -2591,7 +2773,7 @@ h2o.shutdown(prompt = FALSE)
 # ================================================================
 
 run_comprehensive_cv_comparison <- function(user_item_matrix, 
-                                           confidence_matrix,
+                                           original_ratings_matrix,
                                            n_folds = 5, 
                                            optimal_params_mf, 
                                            optimal_params_nn, 
@@ -2611,7 +2793,11 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
   
   # User-Based CF
   cat("Running User-Based CF cross-validation...\n")
-  ubcf_cv <- cross_validate_ubcf(user_item_matrix, confidence_matrix, original_ratings_matrix, n_folds = n_folds, k = k)
+  # Create confidence matrix for CF methods (simple approach: 1.0 for explicit, 0.5 for implicit)
+  confidence_matrix_cf <- ifelse(original_ratings_matrix == 0, 0.5, 1.0)
+  confidence_matrix_cf[is.na(confidence_matrix_cf)] <- 0.5
+  
+  ubcf_cv <- cross_validate_ubcf(user_item_matrix, confidence_matrix_cf, original_ratings_matrix, n_folds = n_folds, k = k)
   all_results[1, ] <- list(
     "User-Based CF",
     round(mean(ubcf_cv$rmse), 3),
@@ -2620,7 +2806,7 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
   
   # Item-Based CF
   cat("Running Item-Based CF cross-validation...\n")
-  ibcf_cv <- cross_validate_ibcf(user_item_matrix, confidence_matrix, original_ratings_matrix, n_folds = n_folds, k = k)
+  ibcf_cv <- cross_validate_ibcf(user_item_matrix, confidence_matrix_cf, original_ratings_matrix, n_folds = n_folds, k = k)
   all_results[2, ] <- list(
     "Item-Based CF",
     round(mean(ibcf_cv$rmse), 3),
@@ -2636,6 +2822,9 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
     min_ratings_per_user = 3
   )
   
+  # Create original ratings matrix for MF (explicit only)
+  original_ratings_matrix_mf <- user_item_matrix_mf  # For explicit-only, original = current
+  
   mf_cv_results <- cross_validate_mf(
     user_item_matrix_mf,
     original_ratings_matrix_mf,
@@ -2650,16 +2839,15 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
     round(sd(mf_cv_results$RMSE), 3)
   )
   
-  # Neural Network - Fixed to include confidence_matrix parameter
+  # Neural Network
   cat("Running Neural Network cross-validation...\n")
   nn_cv_results <- cross_validate_nn(
-    user_item_matrix, 
-    confidence_matrix,  # Add this parameter
+    user_item_matrix,
+    original_ratings_matrix,
     n_folds = n_folds,
     hidden = optimal_params_nn$hidden,
     epochs = optimal_params_nn$epochs,
     activation = optimal_params_nn$activation,
-    hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
     l1 = optimal_params_nn$l1,
     l2 = optimal_params_nn$l2
   )
@@ -2681,7 +2869,7 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
 # ================================================================
 
 # Create unified matrices ONCE for all methods
-if (!exists("user_item_matrix") || !exists("confidence_matrix")) {
+if (!exists("user_item_matrix") || !exists("original_ratings_matrix")) {
   cat("Creating unified matrices for comparison...\n")
   matrix_result_unified <- create_user_item_matrix(
     data,
@@ -2692,7 +2880,6 @@ if (!exists("user_item_matrix") || !exists("confidence_matrix")) {
   )
   
   user_item_matrix <- matrix_result_unified$ratings
-  confidence_matrix <- matrix_result_unified$confidence
   original_ratings_matrix <- matrix_result_unified$original_ratings
 }
 
@@ -2718,8 +2905,7 @@ if (!exists("optimal_params_nn")) {
   optimal_params_nn <- list(
     hidden = c(64, 32),
     epochs = 20,
-    activation = "Rectifier",
-    hidden_dropout_ratios = c(0.3, 0.3),
+    activation = "Tanh",
     l1 = 0.00001,
     l2 = 0.00001
   )
@@ -2736,7 +2922,7 @@ cat("\n")
 cat("Starting comprehensive cross-validation comparison...\n\n")
 cv_comparison_results <- run_comprehensive_cv_comparison(
   user_item_matrix = user_item_matrix,
-  confidence_matrix = confidence_matrix,
+  original_ratings_matrix = original_ratings_matrix,
   n_folds = 5,
   optimal_params_mf = optimal_params_mf,
   optimal_params_nn = optimal_params_nn,
@@ -2824,12 +3010,11 @@ if (exists("cv_comparison_results")) {
                                        n_iter = 50)
       } else if (best_method == "Neural Network") {
         cv_results <- cross_validate_nn(subset_matrix, 
-                                       confidence_matrix = NULL,  # No confidence matrix in subset
+                                       original_ratings_matrix = NULL,  # No original ratings matrix in subset
                                        n_folds = n_folds, 
                                        hidden = optimal_params_nn$hidden,
                                        epochs = optimal_params_nn$epochs,
                                        activation = optimal_params_nn$activation,
-                                       hidden_dropout_ratios = optimal_params_nn$hidden_dropout_ratios,
                                        l1 = optimal_params_nn$l1,
                                        l2 = optimal_params_nn$l2)
       }
