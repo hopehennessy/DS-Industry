@@ -107,6 +107,7 @@ load('mf_final_model_mf.Rdata')
 load('mf_tuning_results.Rdata')
 load('nn_final_model_nn.Rdata') 
 load('all_cv_results.Rdata')
+load('dataset_size_analysis_complete.Rdata')
 
 ```
 
@@ -3091,63 +3092,44 @@ analyze_catalog_sizes_fair <- function(data,
 # RUN THE ANALYSIS
 # ============================================================================
 
-cat("Starting comprehensive catalog size analysis with per-user 80/20 split...\n")
-cat("Testing 17 catalog sizes from 5 to 145 books for detailed analysis...\n\n")
+# catalog_analysis_results <- analyze_catalog_sizes_fair(
+#   data = data,
+#   catalog_sizes = c(5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 145),
+#   optimal_params_mf = optimal_params_mf,
+#   test_fraction = 0.2,
+#   min_user_ratings = 3,  
+#   n_seeds = 5,
+#   base_seed = 123
+# )
+# 
+# # Extract results
+# size_impact_results <- catalog_analysis_results$summary
+# size_impact_results_detailed <- catalog_analysis_results$detailed
+# 
+# save(size_impact_results, size_impact_results_detailed, 
+#      file = "dataset_size_analysis_complete.Rdata")
 
-catalog_analysis_results <- analyze_catalog_sizes_fair(
-  data = data,
-  catalog_sizes = c(5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 145),
-  optimal_params_mf = optimal_params_mf,
-  test_fraction = 0.2,
-  min_user_ratings = 3,  # Only include users with at least 3 ratings
-  n_seeds = 5,
-  base_seed = 123
-)
-
-# Extract results
-size_impact_results <- catalog_analysis_results$summary
-size_impact_results_detailed <- catalog_analysis_results$detailed
-
-# ============================================================================
-# DISPLAY RESULTS
-# ============================================================================
-
-cat("\n=== SUMMARY RESULTS ===\n\n")
 
 kable(
   size_impact_results %>% 
-    select(catalog_size, n_valid_runs, rmse_mean, rmse_se, sparsity_mean, 
-           n_users_mean, n_explicit_mean, n_train_mean, n_test_mean),
-  caption = "Impact of Catalog Size on Prediction Accuracy (Comprehensive Analysis: 17 Sizes)",
+    select(catalog_size, rmse_mean, rmse_se, sparsity_mean),
+  caption = "Impact of Catalog Size on Prediction Accuracy",
   digits = 4,
-  col.names = c("Catalog Size", "Valid Runs", "Mean RMSE", "SE", 
-                "Sparsity %", "Users", "Explicit Ratings", "Train", "Test"),
-  align = c("c", "c", "c", "c", "c", "c", "c", "c", "c")
+  col.names = c("Catalog Size", "Mean RMSE", "SE", "Sparsity %"),
+  align = c("c", "c", "c", "c")
 ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
-  row_spec(which.min(size_impact_results$rmse_mean), 
-           bold = TRUE, color = "white", background = "#4CAF50") %>%
-  footnote(
-    general = "Comprehensive analysis testing 17 catalog sizes (5-145 books). Per-user 80/20 split ensures fair comparison. TOP N popular books used for each catalog size. Only users with ≥3 ratings included.",
-    general_title = "Note:"
-  )
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-# ============================================================================
-# VISUALIZATION AND INTERPRETATION
-# ============================================================================
 
 ```{r dataset-size-visualization, fig.cap="Comprehensive Dataset Size Impact Analysis Results. Panel A shows RMSE trends across 17 catalog sizes with error bars. Panel B displays sparsity patterns. Panel C reveals the relationship between sparsity and accuracy. Panel D shows individual seed variability.", fig.width=12, fig.height=10}
 
-# Panel A: RMSE Trend with Error Bars
-valid_results <- size_impact_results %>% filter(!is.na(rmse_mean))
-
-p1 <- ggplot(valid_results, aes(x = catalog_size, y = rmse_mean)) +
+ggplot(size_impact_results, aes(x = catalog_size, y = rmse_mean)) +
   geom_line(color = "steelblue", size = 1.2) +
   geom_point(color = "steelblue", size = 3) +
   geom_errorbar(aes(ymin = rmse_mean - rmse_se, ymax = rmse_mean + rmse_se),
                 width = 3, color = "steelblue", alpha = 0.7) +
-  geom_point(data = valid_results[which.min(valid_results$rmse_mean), ],
+  geom_point(data = size_impact_results[which.min(size_impact_results$rmse_mean), ],
              color = "red", size = 5, shape = 18) +
   labs(title = "A. RMSE by Catalog Size (17 Sizes)",
        subtitle = "Error bars show ±1 SE across 5 seeds. Red diamond indicates optimal size.",
@@ -3155,126 +3137,10 @@ p1 <- ggplot(valid_results, aes(x = catalog_size, y = rmse_mean)) +
   theme_minimal() +
   theme(plot.title = element_text(face = "bold", size = 14))
 
-# Panel B: Sparsity Trend
-p2 <- ggplot(valid_results, aes(x = catalog_size, y = sparsity_mean)) +
-  geom_line(color = "coral", size = 1.2) +
-  geom_point(color = "coral", size = 3) +
-  labs(title = "B. Matrix Sparsity by Catalog Size (17 Sizes)",
-       subtitle = "Larger catalogs increase sparsity",
-       x = "Number of Books", y = "Sparsity (%)") +
-  theme_minimal() +
-  theme(plot.title = element_text(face = "bold", size = 14))
 
-# Panel C: Sparsity vs RMSE Relationship
-p3 <- ggplot(valid_results, aes(x = sparsity_mean, y = rmse_mean)) +
-  geom_point(color = "darkgreen", size = 4) +
-  geom_smooth(method = "lm", color = "red", se = TRUE, alpha = 0.3) +
-  labs(title = "C. Sparsity vs Accuracy Trade-off",
-       subtitle = "Higher sparsity generally leads to higher RMSE",
-       x = "Sparsity (%)", y = "Mean RMSE") +
-  theme_minimal() +
-  theme(plot.title = element_text(face = "bold", size = 14))
-
-# Panel D: Individual Seed Variability
-p4 <- ggplot(size_impact_results_detailed %>% filter(!is.na(rmse)), 
-             aes(x = factor(catalog_size), y = rmse)) +
-  geom_boxplot(fill = "lightblue", alpha = 0.7) +
-  geom_point(data = valid_results, aes(x = factor(catalog_size), y = rmse_mean),
-             color = "darkred", size = 4, shape = 18) +
-  labs(title = "D. Variability Across Seeds",
-       subtitle = "Red diamonds show mean across 5 iterations",
-       x = "Catalog Size", y = "RMSE") +
-  theme_minimal() +
-  theme(plot.title = element_text(face = "bold", size = 14))
-
-# Combine all plots
-library(patchwork)
-combined_plot <- (p1 | p2) / (p3 | p4)
-combined_plot
 ```
 
-# ============================================================================
-# INTERPRETATION AND CONCLUSIONS
-# ============================================================================
 
-```{r dataset-size-interpretation}
-
-# Find optimal catalog size
-optimal_size <- valid_results$catalog_size[which.min(valid_results$rmse_mean)]
-optimal_rmse <- min(valid_results$rmse_mean, na.rm = TRUE)
-
-# Calculate improvement rates
-improvement_analysis <- valid_results %>%
-  filter(!is.na(rmse_change)) %>%
-  mutate(
-    significant_improvement = abs(rmse_change) > rmse_se,
-    diminishing_returns = abs(percent_improvement) < 2
-  )
-
-# Identify diminishing returns point
-diminishing_point <- improvement_analysis %>%
-  filter(diminishing_returns) %>%
-  slice(1) %>%
-  pull(catalog_size)
-
-cat("=== COMPREHENSIVE DATASET SIZE IMPACT ANALYSIS: KEY FINDINGS ===\n")
-cat("Analysis of 17 catalog sizes from 5 to 145 books\n\n")
-
-cat("1. OPTIMAL CATALOG SIZE:\n")
-cat("   • Best performance achieved with", optimal_size, "books\n")
-cat("   • RMSE at optimal size:", round(optimal_rmse, 4), "\n\n")
-
-cat("2. ACCURACY TRENDS:\n")
-cat("   • Small catalogs (5-20 books): High RMSE due to insufficient data\n")
-cat("   • Medium catalogs (30-75 books): Steady improvement\n")
-cat("   • Large catalogs (100+ books): Potential diminishing returns\n\n")
-
-if (!is.na(diminishing_point)) {
-  cat("3. DIMINISHING RETURNS:\n")
-  cat("   • Marginal improvement <2% beyond", diminishing_point, "books\n")
-  cat("   • Adding more titles beyond this point provides minimal benefit\n\n")
-}
-
-cat("4. SPARSITY IMPACT:\n")
-sparsity_correlation <- cor(valid_results$sparsity_mean, valid_results$rmse_mean, use = "complete.obs")
-cat("   • Sparsity-RMSE correlation:", round(sparsity_correlation, 3), "\n")
-cat("   • Higher sparsity generally leads to higher prediction error\n\n")
-
-cat("5. PRACTICAL RECOMMENDATIONS:\n")
-cat("   • For new systems: Start with 30-50 books for reasonable accuracy\n")
-cat("   • For established systems: 75-100 books provide good balance\n")
-cat("   • Beyond 100 books: Focus on data quality over quantity\n\n")
-
-# Create summary table
-recommendations <- data.frame(
-  Scenario = c("Minimum Viable", "Balanced Performance", "Optimal Performance", "Maximum Practical"),
-  Books = c("20-30", "50-75", "75-100", "100-145"),
-  RMSE_Range = c("1.8-2.2", "1.6-1.8", "1.4-1.6", "1.4-1.5"),
-  Sparsity_Range = c("85-90%", "80-85%", "75-80%", "70-75%"),
-  Use_Case = c("Proof of concept", "Production ready", "High accuracy", "Research/benchmark")
-)
-
-kable(recommendations, 
-      caption = "Practical Recommendations for Catalog Size (Based on 17-Size Analysis)",
-      col.names = c("Scenario", "Books", "RMSE Range", "Sparsity Range", "Use Case"),
-      align = c("l", "c", "c", "c", "l")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
-```
-
-# ============================================================================
-# SAVE RESULTS
-# ============================================================================
-
-```{r save-dataset-size-results}
-# Save comprehensive results
-save(size_impact_results, size_impact_results_detailed, 
-     file = "dataset_size_analysis_complete.Rdata")
-
-cat("✓ Comprehensive dataset size analysis complete!\n")
-cat("✓ Results saved to 'dataset_size_analysis_complete.Rdata'\n")
-cat("✓ Analysis provides evidence-based guidance on catalog size vs accuracy\n")
-cat("✓ Tested 17 catalog sizes for detailed performance insights\n")
-```
 
 
 
