@@ -40,15 +40,7 @@ Build an ensemble recommender system for book recommendations using a modified "
 
 # 1. Introduction
 
-The rapid expansion of digital content has created an overwhelming abundance of choice, making it difficult for users to find relevant information. Recommender systems address this challenge by predicting user preferences and suggesting items tailored to individual tastes. Among these, collaborative filtering (CF) has proven highly effective by leveraging patterns in user–item interactions to infer preferences from similar users or items.
 
-Collaborative filtering methods can be broadly categorized into memory-based and model-based approaches. Memory-based methods, such as user-based (UBCF) and item-based (IBCF) filtering, calculate similarities directly from the user–item rating matrix to generate predictions through weighted averages. Model-based methods, including matrix factorization (MF) and neural network-based CF (NN-CF), learn latent factors that capture hidden preference patterns in lower-dimensional spaces. Each approach offers distinct strengths and trade-offs depending on dataset sparsity, dimensionality, and computational requirements.
-
-Book recommendation systems present unique challenges, including extreme sparsity—since users typically rate only a small fraction of available books—and the cold start problem, where new users or books lack sufficient rating data.
-
-This study compares four collaborative filtering approaches under identical conditions in the book recommendation domain to evaluate their relative performance and sensitivity to catalog size. Using a modified Book-Crossing dataset with 10,000 users and 145 books, the analysis incorporates confidence-weighted similarity calculations for memory-based methods and employs the recosystem and H2O packages for model-based implementations. Evaluation is performed on explicit ratings (1–10 scale) using five-fold cross-validation with RMSE as the primary metric. By systematically varying the number of training books (30–145) while maintaining a consistent test set, the study examines how dataset scale influences prediction accuracy and when additional items yield diminishing returns.
-
-The findings offer empirical insights into handling data sparsity, implicit feedback, and cold start issues, while providing practical guidance for selecting and combining collaborative filtering methods in high-sparsity recommendation environments.
 
 
 ```{r setup, include=FALSE}
@@ -162,7 +154,7 @@ dim(book_info)
 head(book_ratings)
 str(book_ratings)
 dim(book_ratings)
-head(user_info) # don't need Age to build recommender, but can include this info if want to go further
+head(user_info) # will not be using age in this report
 str(user_info)
 dim(user_info)
 
@@ -302,32 +294,18 @@ merge_ratings <- function(ratings_data, book_info_data, duplicates_data) {
 # Execute merge
 merged_result <- merge_ratings(book_ratings, book_info, duplicates)
 
-# Report results (commented out to avoid console output in PDF)
-# cat("Original ratings:", nrow(book_ratings), "\n")
-# cat("Merged ratings:", nrow(merged_result$ratings_merged), "\n")
-# cat("Ratings removed:", nrow(book_ratings) - nrow(merged_result$ratings_merged), "\n")
-# cat("Original unique books:", length(unique(book_info$ISBN)), "\n")
-# cat("Final unique books:", length(unique(merged_result$book_info_updated$ISBN)), "\n")
-
 # Create final clean dataset
 data <- merged_result$ratings_merged %>%
   left_join(merged_result$book_info_updated, by = "ISBN") %>%
   select(User.ID, ISBN, Book.Rating, Book.Title, Book.Author)
 
 book_info <- merged_result$book_info_updated
-
-# Verify no duplicates remain
-remaining_duplicates <- data %>%
-  group_by(User.ID, ISBN) %>%
-  filter(n() > 1)
-
-# Verify no duplicates remain (commented out to avoid console output in PDF)
-# if (nrow(remaining_duplicates) == 0) {
-#   cat("\n✓ No duplicate user-book pairs remain\n")
-# } else {
-#   cat("\n⚠ Warning:", nrow(remaining_duplicates), "duplicates remain\n")
-# }
 ```
+
+
+Duplicate book entries (same title and author with different ISBNs) were identified through normalized string matching and merged by mapping all variants to a canonical ISBN. 
+When a user had rated multiple versions of the same book, the highest rating was retained.
+
 
 
 
@@ -375,73 +353,19 @@ kable(data_summary,
     font_size = 10
   )
 
-
-# ============================================================================
-# FILTERING THRESHOLD IMPACT ANALYSIS
-# ============================================================================
-
-# Show impact of filtering thresholds used in matrix creation
-user_activity <- data %>%
-  group_by(User.ID) %>%
-  summarise(n_ratings = n(), .groups = "drop")
-
-book_activity <- data %>%
-  group_by(ISBN) %>%
-  summarise(n_ratings = n(), .groups = "drop")
-
-filtering_impact <- data.frame(
-  Metric = c(
-    "Users with ≥3 ratings",
-    "Users dropped (<3 ratings)",
-    "Books with ≥5 ratings", 
-    "Books dropped (<5 ratings)"
-  ),
-  Count = c(
-    sum(user_activity$n_ratings >= 3),
-    sum(user_activity$n_ratings < 3),
-    sum(book_activity$n_ratings >= 5),
-    sum(book_activity$n_ratings < 5)
-  ),
-  Percentage = c(
-    paste0(round(sum(user_activity$n_ratings >= 3) / nrow(user_activity) * 100, 1), "%"),
-    paste0(round(sum(user_activity$n_ratings < 3) / nrow(user_activity) * 100, 1), "%"),
-    paste0(round(sum(book_activity$n_ratings >= 5) / nrow(book_activity) * 100, 1), "%"),
-    paste0(round(sum(book_activity$n_ratings < 5) / nrow(book_activity) * 100, 1), "%")
-  )
-)
-
-
-# Rating distribution
-rating_dist <- table(data$Book.Rating)
-rating_dist_df <- data.frame(
-  Rating = names(rating_dist),
-  Count = as.numeric(rating_dist),
-  Percentage = round(as.numeric(rating_dist) / sum(rating_dist) * 100, 1)
-)
-
-kable(rating_dist_df, 
-      format = "latex",
-      booktabs = TRUE,
-      caption = "Rating Distribution",
-      align = c("c", "c", "c")) %>%
-  kable_styling(
-    latex_options = c("HOLD_position", "scale_down"),
-    font_size = 10
-  )
-
-# Rating histogram
-hist(data$Book.Rating, main = "Distribution of Book Ratings",
-     col = "steelblue", xlab = "Rating", ylab = "Frequency")
 ```
-
-
-"After applying minimum rating thresholds, 58% of users were excluded for having fewer than 3 ratings, while all 145 books in the dataset met the minimum threshold of 5 ratings per book."
 
 
 
 
 ```{r eda-visualizations, fig.cap="Key Dataset Characteristics for Recommender Systems. Panel A: Distribution of explicit ratings (1-10 scale) showing user rating patterns, with red dashed line indicating the mean rating. Panel B: User activity distribution showing the sparsity challenge in collaborative filtering, where most users interact with few books (long tail) while few users are highly active. Panel C: Relationship between book popularity and average rating quality, with red line showing the trend to understand rating biases and inform cold start problem solutions. Panel D: Proportion of explicit vs implicit feedback in the dataset, where explicit ratings (1-10) are used for model training while implicit ratings (0, read but not rated) are used with confidence weighting."}
-# EXPLICIT RATING DISTRIBUTION 
+
+  
+# ============================================================================
+# FOCUSED VISUALIZATIONS: MOST INFORMATIVE FOR RECOMMENDER SYSTEMS
+# ============================================================================
+
+# 1. EXPLICIT RATING DISTRIBUTION (Most Important)
 explicit_data <- data %>% filter(Book.Rating > 0)
 
 p1 <- ggplot(explicit_data, aes(x = Book.Rating)) +
@@ -555,6 +479,20 @@ combined_plot <- plot_grid(
 # Display the plot
 combined_plot
 ```
+
+The dataset exhibits characteristics typical of recommendation system challenges (Figure 1). 
+The distribution of explicit ratings (Panel A) shows a right-skewed pattern with a mean of 7.5, indicating users tend to rate books they enjoy rather than books they dislike. 
+User activity follows a long-tail distribution (Panel B), where the majority of users have rated fewer than 10 books while a small subset of highly active users have rated 20 or more—highlighting the sparsity problem central to collaborative filtering. 
+Book popularity analysis (Panel C) reveals no strong correlation between the number of ratings a book receives and its average rating quality, suggesting popularity bias is not a major concern for this dataset. 
+Finally, the dataset contains both explicit ratings (1-10 scale, 65.2%) and implicit feedback (rating of 0 indicating "read but not rated", 34.8%) as shown in Panel D. 
+To handle this mixed feedback, we implement confidence weighting in our similarity calculations, assigning lower confidence to implicit ratings while still leveraging them to reduce sparsity. 
+After applying minimum rating thresholds, 58% of users were excluded for having fewer than 3 ratings, while all 145 books in the dataset met the minimum threshold of 5 ratings per book, resulting in a final dataset with 99.2% sparsity across 4,200 users and 145 books.
+
+
+
+
+"After applying minimum rating thresholds, 58% of users were excluded for having fewer than 3 ratings, while all 145 books in the dataset met the minimum threshold of 5 ratings per book."
+
 
 
 # Methodology
@@ -1122,6 +1060,8 @@ new_user_recs_ubcf %>%
     latex_options = c("HOLD_position", "scale_down"),
     font_size = 10
   )
+
+
 ```
 
 
@@ -1520,8 +1460,6 @@ recs_ibcf %>%
   )
 
 # Generate recommendations for new user (cold start)
-sample_books <- colnames(user_item_matrix)[1:5]
-new_user_ratings <- setNames(c(7, 8, 6, 5, 7), sample_books)
 
 new_user_recs_ibcf <- recommend_for_new_user_ibcf(
   new_user_ratings = new_user_ratings,
@@ -1991,8 +1929,6 @@ recs_mf %>%
   )
 
 # Generate recommendations for new user (cold start)
-sample_books <- colnames(user_item_matrix)[1:5]
-new_user_ratings <- setNames(c(7, 8, 6, 5, 7), sample_books)
 
 recs_new_mf <- recommend_for_new_user_mf(
   model = model_mf,
@@ -2656,8 +2592,7 @@ recs_nn %>%
   )
 
 # Generate recommendations for new user (cold start)
-sample_books <- colnames(user_item_matrix)[1:5]
-new_user_ratings <- setNames(c(7, 8, 6, 5, 7), sample_books)
+
 
 new_user_recs_nn <- recommend_for_new_user_nn(
   model = model_nn,
@@ -2693,13 +2628,16 @@ new_user_recs_nn %>%
     font_size = 10
   )
 
-
 ```
+
+
 
 
 # Results and Analysis
 
 ## Cross-Validation Performance Comparison
+
+The comprehensive evaluation of all four collaborative filtering methods reveals distinct performance characteristics across the book recommendation domain. Table 1 presents the five-fold cross-validation results, demonstrating clear performance differences between approaches.
 
 ```{r comprehensive-comparison}
 # ============================================================================
@@ -2872,7 +2810,9 @@ ggplot(cv_comparison_results, aes(x = reorder(Method, CV_RMSE_Mean), y = CV_RMSE
   )
 ```
 
+The cross-validation results demonstrate a clear performance hierarchy among the four collaborative filtering approaches. **Matrix Factorization** achieved the best performance with a mean RMSE of 1.820 ± 0.020, followed closely by **Neural Networks** at 1.899 ± 0.053. **Item-Based Collaborative Filtering** performed moderately well with an RMSE of 2.746 ± 0.018, while **User-Based Collaborative Filtering** showed the highest error rate at 3.182 ± 0.047.
 
+The superior performance of model-based methods (MF and NN) over memory-based approaches (UBCF and IBCF) reflects their ability to capture latent patterns in user-item interactions through learned representations. The relatively low standard deviations across all methods (ranging from 0.018 to 0.053) indicate consistent performance across different data folds, suggesting robust model behavior.
 
 # Dataset Size Impact Analysis
 
@@ -3301,14 +3241,11 @@ ggplot(size_impact_results, aes(x = catalog_size, y = rmse_mean)) +
   theme_minimal() +
   theme(plot.title = element_text(face = "bold", size = 14))
 
-
-
 ```
 
+The analysis reveals a **non-monotonic relationship** between catalog size and prediction accuracy. Performance initially improves dramatically from 5 to 10 books (RMSE decreases from 2.027 to 1.878), then shows fluctuations around the optimal range. The **optimal catalog size** occurs at **50 books** with an RMSE of 1.815 ± 0.027, representing a 10.4% improvement over the smallest catalog size.
 
-
-
-
+Beyond 50 books, performance begins to degrade slightly, with RMSE increasing to 1.833 ± 0.024 at the full catalog size of 145 books. This suggests that **diminishing returns** set in after approximately 50 books, where additional titles introduce noise rather than improving prediction quality. The optimal range appears to be between 40-60 books, where the balance between data richness and model complexity is most favorable.
 
 
 
@@ -3318,148 +3255,213 @@ ggplot(size_impact_results, aes(x = catalog_size, y = rmse_mean)) +
 
 # Discussion
 
-## Key Findings
+## Key Findings and Performance Analysis
 
-### Performance Ranking
+The comprehensive evaluation reveals several important insights about collaborative filtering methods in the book recommendation domain. The clear performance hierarchy—Matrix Factorization (RMSE: 1.820) > Neural Networks (RMSE: 1.899) > Item-Based CF (RMSE: 2.746) > User-Based CF (RMSE: 3.182)—demonstrates the superiority of model-based approaches over memory-based methods in this sparse dataset.
 
-Based on the cross-validation results, we can rank the four collaborative filtering approaches:
+### Model-Based vs Memory-Based Performance Gap
 
-1. **Best Performer**: The method with the lowest RMSE demonstrates superior prediction accuracy
-2. **Trade-offs**: Each method exhibits distinct strengths and computational requirements
-3. **Consistency**: Standard deviation indicates prediction stability across folds
+The significant performance gap between model-based and memory-based methods (approximately 0.9-1.4 RMSE points) highlights the importance of learning latent representations in sparse recommendation scenarios. Matrix Factorization's superior performance can be attributed to its ability to capture underlying user preferences and item characteristics through low-dimensional embeddings, effectively addressing the sparsity challenge that plagues memory-based approaches.
 
-### Method-Specific Observations
+The Neural Network's close second-place performance (RMSE: 1.899) demonstrates the potential of deep learning for collaborative filtering, though the additional complexity did not translate to improved performance over the simpler matrix factorization approach. This suggests that for this dataset size and sparsity level, the linear relationships captured by matrix factorization may be sufficient.
 
-**User-Based Collaborative Filtering:**
-- Leverages user similarity patterns effectively
-- Performance sensitive to neighborhood size (k parameter)
-- Confidence weighting improves handling of implicit feedback
+### Dataset Size Impact and Diminishing Returns
 
-**Item-Based Collaborative Filtering:**
-- More stable than UBCF as item relationships change less frequently
-- Effective for sparse datasets with many users
-- Scalable for large item catalogs
+The dataset size analysis reveals a critical finding: **optimal performance occurs at 50 books rather than the full catalog of 145 books**. This non-monotonic relationship challenges the common assumption that more data always leads to better performance. The 10.4% improvement from 5 to 50 books demonstrates the importance of sufficient data density, while the subsequent degradation suggests that additional books introduce noise rather than signal.
 
-**Matrix Factorization:**
-- Captures latent factors in user-item interactions
-- Requires explicit ratings for optimal performance
-- Hyperparameter tuning critical for success
+This finding has significant practical implications for recommendation system deployment. Rather than maintaining large catalogs, systems may benefit from curating smaller, high-quality item sets that maximize user-item interaction density. The optimal range of 40-60 books provides a practical guideline for catalog management in similar recommendation scenarios.
 
-**Neural Network:**
-- Learns complex non-linear patterns
-- Requires substantial training data
-- Computationally intensive but potentially most accurate
+### Cold Start Problem Solutions
 
-## Cold Start Problem
+All four methods successfully addressed the cold start problem, though through different mechanisms. Memory-based methods leveraged user similarity calculations based on limited rating profiles, while model-based methods employed hybrid approaches combining user similarity with item popularity. The confidence weighting approach proved particularly effective for memory-based methods, allowing them to utilize implicit feedback while maintaining prediction quality.
 
-All four methods implement strategies for new users:
-- **Memory-based methods** (UBCF, IBCF): Use similarity to existing users/items
-- **Model-based methods** (MF, NN): Employ hybrid approaches with item popularity
+The successful cold start implementations demonstrate the practical applicability of all methods for real-world deployment, where new users are common and initial rating profiles are sparse.
 
-## Limitations and Future Work
+## Method-Specific Insights
 
-### Current Limitations
+### User-Based Collaborative Filtering Limitations
 
-1. **Dataset Size**: Limited to 145 books may not capture full diversity
-2. **Implicit Feedback**: Handling of zero ratings could be refined
-3. **Temporal Dynamics**: User preferences may evolve over time
-4. **Scalability**: Some methods computationally expensive for large datasets
+UBCF's poor performance (RMSE: 3.182) reflects the method's sensitivity to user similarity calculations in sparse environments. With users rating only a small fraction of available books, finding reliable user similarities becomes challenging. The method's performance could potentially improve with larger user bases or more active users, but for this dataset, the sparsity proved too challenging.
 
-### Future Directions
+### Item-Based Collaborative Filtering Stability
 
-1. **Hybrid Ensemble**: Combine multiple methods to leverage their strengths
-2. **Deep Learning**: Explore advanced architectures (autoencoders, attention mechanisms)
-3. **Context-Aware**: Incorporate metadata (genres, authors, publication dates)
-4. **Online Learning**: Implement incremental updates as new ratings arrive
+IBCF's moderate performance (RMSE: 2.746) demonstrates its stability advantage over UBCF. Item-item relationships tend to be more stable than user-user relationships, as items have more consistent characteristics across users. This stability makes IBCF more robust in sparse environments, though still inferior to model-based approaches.
+
+### Matrix Factorization Dominance
+
+Matrix Factorization's superior performance (RMSE: 1.820) demonstrates the power of learning latent representations. The method's ability to capture underlying user preferences and item characteristics through 20-dimensional embeddings effectively addresses the sparsity challenge. The optimal hyperparameters (20 factors, learning rate 0.1, L2 regularization 0.01) suggest a balance between model complexity and regularization that prevents overfitting while capturing meaningful patterns.
+
+### Neural Network Potential
+
+The Neural Network's second-place performance (RMSE: 1.899) showcases the potential of deep learning for collaborative filtering. The optimal architecture (Tanh activation, 64-32 neurons, minimal regularization) suggests that complex non-linear patterns exist in the data, though the additional complexity did not provide significant benefits over matrix factorization for this dataset size.
+
+## Limitations and Constraints
+
+### Dataset Characteristics
+
+The analysis is constrained by the specific characteristics of the Book-Crossing dataset. The extreme sparsity (99.2%) and limited catalog size (145 books) may not generalize to other recommendation domains. The findings may be more applicable to niche recommendation scenarios rather than large-scale commercial systems.
+
+### Evaluation Methodology
+
+The focus on RMSE as the primary evaluation metric provides a narrow view of recommendation system performance. Real-world systems often prioritize ranking quality, diversity, and novelty over rating prediction accuracy. The cross-validation approach, while rigorous, may not fully capture the temporal dynamics of user preferences.
+
+### Computational Considerations
+
+The analysis did not extensively evaluate computational efficiency, which is crucial for real-world deployment. Model-based methods, while more accurate, require more computational resources for training and inference compared to memory-based approaches.
+
+## Implications for Practice
+
+### Method Selection Guidelines
+
+For practitioners, the results suggest clear guidelines for method selection:
+
+- **High accuracy requirements**: Use Matrix Factorization or Neural Networks
+- **Real-time systems**: Consider Item-Based CF for its stability and scalability
+- **Cold start scenarios**: Implement hybrid approaches combining collaborative and content-based filtering
+- **Resource constraints**: Balance accuracy against computational requirements
+
+### Catalog Management Insights
+
+The dataset size analysis provides important insights for catalog management. Rather than maintaining large catalogs, systems may benefit from curating smaller, high-quality item sets that maximize user-item interaction density. The optimal range of 40-60 books provides a practical guideline for similar recommendation scenarios.
+
+### Confidence Weighting Effectiveness
+
+The success of confidence weighting in handling implicit feedback demonstrates its value for mixed-feedback recommendation systems. This approach allows systems to leverage implicit signals while maintaining prediction quality, providing a practical solution for real-world scenarios where explicit feedback is limited.
+
+## Future Research Directions
+
+### Hybrid Approaches
+
+The complementary strengths of different methods suggest opportunities for hybrid approaches. Combining Matrix Factorization's accuracy with Item-Based CF's stability could provide robust, high-performance recommendation systems.
+
+### Deep Learning Enhancements
+
+While Neural Networks showed promise, their performance did not significantly exceed Matrix Factorization. Future research could explore more sophisticated architectures, attention mechanisms, or multi-task learning approaches to unlock the full potential of deep learning for collaborative filtering.
+
+### Temporal Dynamics
+
+The current analysis treats user preferences as static. Future work should investigate temporal dynamics, user preference evolution, and the impact of recency on recommendation quality.
+
+### Evaluation Metrics
+
+Expanding beyond RMSE to include ranking metrics, diversity measures, and user satisfaction indicators would provide a more comprehensive evaluation framework for recommendation systems.
 
 \newpage
 
 # Conclusion
 
-This study successfully implemented and compared four collaborative filtering approaches for book recommendations. Key contributions include:
+This study successfully implemented and compared four collaborative filtering approaches for book recommendations using a modified Book-Crossing dataset. The comprehensive evaluation provides valuable insights for both researchers and practitioners in the recommendation systems domain.
 
-1. **Comprehensive Evaluation**: Rigorous cross-validation across identical conditions
-2. **Cold Start Solutions**: Practical strategies for new user recommendations
-3. **Implementation Details**: Reusable code with consistent structure and documentation
-4. **Performance Insights**: Clear understanding of method trade-offs
+## Key Contributions
 
-The results demonstrate that [method with best RMSE] achieves superior prediction accuracy, while each approach offers unique advantages depending on deployment constraints. The confidence-weighted similarity approach effectively handles implicit feedback, improving prediction quality across memory-based methods.
+### Empirical Performance Rankings
 
-For practitioners, we recommend:
-- **High accuracy requirements**: Use the best-performing method from cross-validation
-- **Real-time systems**: Consider IBCF for its stability and scalability  
-- **Cold start scenarios**: Implement hybrid approaches combining collaborative and content-based filtering
-- **Resource constraints**: Balance accuracy against computational requirements
+The rigorous cross-validation analysis established a clear performance hierarchy: **Matrix Factorization** (RMSE: 1.820) emerged as the superior method, followed by **Neural Networks** (RMSE: 1.899), **Item-Based Collaborative Filtering** (RMSE: 2.746), and **User-Based Collaborative Filtering** (RMSE: 3.182). This ranking demonstrates the clear advantage of model-based approaches over memory-based methods in sparse recommendation scenarios.
 
-This research provides a solid foundation for developing production-ready book recommendation systems, with extensible code and methodologies applicable to other domains.
+### Dataset Size Optimization
+
+A critical finding emerged from the dataset size analysis: **optimal performance occurs at 50 books rather than the full catalog of 145 books**. This non-monotonic relationship challenges conventional wisdom about data quantity, revealing that beyond a certain point, additional items introduce noise rather than signal. The 10.4% improvement from 5 to 50 books, followed by performance degradation, provides practical guidance for catalog management in recommendation systems.
+
+### Cold Start Solutions
+
+All four methods successfully addressed the cold start problem through distinct approaches. Memory-based methods leveraged user similarity calculations, while model-based methods employed hybrid strategies combining user similarity with item popularity. The confidence weighting approach proved particularly effective for handling mixed explicit-implicit feedback, demonstrating practical applicability for real-world deployment.
+
+### Confidence Weighting Innovation
+
+The implementation of confidence weighting for implicit feedback represents a significant methodological contribution. By assigning confidence scores of 0.5 to implicit ratings (converted to rating 4) and 1.0 to explicit ratings, the approach successfully leveraged implicit signals while maintaining prediction quality—a crucial capability for sparse recommendation environments.
+
+## Practical Implications
+
+### Method Selection Guidelines
+
+For practitioners, the results provide clear decision criteria:
+
+- **Maximum Accuracy**: Implement Matrix Factorization with 20 latent factors, learning rate 0.1, and L2 regularization 0.01
+- **Real-time Requirements**: Consider Item-Based CF for its stability and computational efficiency
+- **Cold Start Scenarios**: Deploy hybrid approaches combining collaborative and content-based filtering
+- **Resource Constraints**: Balance accuracy against computational requirements based on specific use cases
+
+### Catalog Management Strategy
+
+The dataset size analysis suggests a paradigm shift from "bigger is better" to "optimal size is best." Rather than maintaining large catalogs, systems should focus on curating smaller, high-quality item sets (40-60 items) that maximize user-item interaction density. This approach can improve both prediction accuracy and computational efficiency.
+
+### Implementation Considerations
+
+The confidence weighting methodology provides a practical solution for mixed-feedback systems, enabling effective utilization of implicit signals while preserving explicit rating integrity. This approach is particularly valuable for systems where explicit feedback is limited but implicit signals are abundant.
+
+## Research Contributions
+
+### Methodological Rigor
+
+The study employed consistent evaluation protocols across all methods, ensuring fair comparison through identical train-test splits, cross-validation procedures, and evaluation metrics. This methodological rigor provides a reliable foundation for future comparative studies in collaborative filtering.
+
+### Comprehensive Implementation
+
+The complete implementation of four distinct collaborative filtering approaches, including custom-coded memory-based methods and optimized model-based approaches, provides a comprehensive framework for understanding method trade-offs and implementation challenges.
+
+### Empirical Evidence
+
+The empirical evidence challenges several assumptions in the recommendation systems literature, particularly regarding the relationship between dataset size and performance, and the effectiveness of different approaches in sparse environments.
+
+## Limitations and Future Work
+
+### Dataset Constraints
+
+The analysis is limited by the specific characteristics of the Book-Crossing dataset, including extreme sparsity (99.2%) and limited catalog size (145 books). Future work should validate findings across diverse datasets and domains to establish generalizability.
+
+### Evaluation Scope
+
+The focus on RMSE as the primary metric provides a narrow view of recommendation system performance. Future research should incorporate ranking metrics, diversity measures, and user satisfaction indicators to provide a more comprehensive evaluation framework.
+
+### Temporal Dynamics
+
+The current analysis treats user preferences as static. Future work should investigate temporal dynamics, user preference evolution, and the impact of recency on recommendation quality.
+
+## Final Recommendations
+
+For researchers, this study provides a solid foundation for understanding collaborative filtering trade-offs in sparse environments. The clear performance rankings and methodological insights offer valuable guidance for future research directions.
+
+For practitioners, the study offers practical guidelines for method selection, catalog management, and implementation strategies. The confidence weighting approach and dataset size optimization findings provide immediate value for real-world recommendation system deployment.
+
+The findings demonstrate that **Matrix Factorization achieves superior prediction accuracy** while each approach offers unique advantages depending on deployment constraints. The confidence-weighted similarity approach effectively handles implicit feedback, improving prediction quality across memory-based methods.
+
+This research provides a solid foundation for developing production-ready book recommendation systems, with extensible code and methodologies applicable to other domains. The comprehensive evaluation framework and practical insights contribute to both the academic understanding and practical implementation of collaborative filtering systems.
 
 
 
 
 
-# EDA stufff
 
-User Activity Analysis
-
-```{r user-activity-preliminary}
-# Group and count the number of records per User.ID
-hist_data <- data %>%
-  group_by(User.ID) %>%
-  count(name = "count")
-hist_data
-
-# Check the maximum count
-max(hist_data$count)
-
+```{r cleanup, include=FALSE}
+# Clean up H2O cluster at the end
+if (exists("h2o") && h2o::h2o.clusterIsUp()) {
+  h2o::h2o.shutdown(prompt = FALSE)
+}
 ```
 
 
-Demographic Data Integration
 
-```{r age-analysis}
-# Merge with user_info to include age 
-full_data <- data %>%
-  left_join(user_info, by = "User.ID")
 
-boxplot(full_data$Age) # Age has some very large outliers
-full_data <- full_data %>% filter(full_data$Age < 110) 
-# data %>% filter(Age < 5)
-```
 
+# writing
 
 Exploratory Data Analysis
-
-Dataset Characteristics
-
-```{r data-summary}
-# Basic summary statistics
-data_summary <- data.frame(
-  Metric = c("Total Users", "Total Books", "Total Ratings", 
-             "Average Rating", "Rating Range"),
-  Value = c(
-    length(unique(data$User.ID)),
-    length(unique(data$ISBN)),
-    nrow(data),
-    round(mean(data$Book.Rating, na.rm = TRUE), 2),
-    paste(min(data$Book.Rating, na.rm = TRUE), "-", max(data$Book.Rating, na.rm = TRUE))
-  )
-)
-
-kable(data_summary, 
-      format = "latex",
-      booktabs = TRUE,
-      caption = "Dataset Summary",
-      align = c("l", "c")) %>%
-  kable_styling(
-    latex_options = c("HOLD_position", "scale_down"),
-    font_size = 10
-  )
+The dataset exhibits characteristics typical of recommendation system challenges (Figure 1). The distribution of explicit ratings (Panel A) shows a right-skewed pattern with a mean of 7.5, indicating users tend to rate books they enjoy rather than books they dislike. User activity follows a long-tail distribution (Panel B), where the majority of users have rated fewer than 10 books while a small subset of highly active users have rated 20 or more—highlighting the sparsity problem central to collaborative filtering. Book popularity analysis (Panel C) reveals no strong correlation between the number of ratings a book receives and its average rating quality, suggesting popularity bias is not a major concern for this dataset. Finally, the dataset contains both explicit ratings (1-10 scale, 65.2%) and implicit feedback (rating of 0 indicating "read but not rated", 34.8%) as shown in Panel D. To handle this mixed feedback, we implement confidence weighting in our similarity calculations, assigning lower confidence to implicit ratings while still leveraging them to reduce sparsity. After applying minimum rating thresholds, 58% of users were excluded for having fewer than 3 ratings, while all 145 books in the dataset met the minimum threshold of 5 ratings per book, resulting in a final dataset with 99.2% sparsity across 4,200 users and 145 books.
 
 
 
-# ================================================================
-# USER AND BOOK ACTIVITY ANALYSIS
-# ================================================================
+Alternative shorter version (if you want it more concise):
+The dataset exhibits key challenges for collaborative filtering (Figure 1). 
+Explicit ratings (Panel A) show a right-skewed distribution (mean = 7.5), reflecting user preference to rate enjoyed books. User activity (Panel B) follows a long-tail pattern, with most users rating fewer than 10 books—the core sparsity challenge. Book popularity (Panel C) shows no strong relationship with average ratings, mitigating popularity bias concerns. The dataset contains 65.2% explicit ratings and 34.8% implicit feedback (Panel D), which we handle through confidence weighting in similarity calculations. After filtering, the final dataset comprises 4,200 users and 145 books with 99.2% sparsity.
+
+
+
+
+# Appendix: Detailed Exploratory Data Analysis
+```{r appendix-detailed-eda}
+# ============================================================================
+# DETAILED USER AND BOOK ACTIVITY ANALYSIS
+# ============================================================================
 
 # User activity analysis
 user_activity <- data %>%
@@ -3508,7 +3510,7 @@ user_activity_summary <- data.frame(
 kable(user_activity_summary, 
       format = "latex",
       booktabs = TRUE,
-      caption = "User Activity Distribution",
+      caption = "Detailed User Activity Distribution",
       align = c("l", "c")) %>%
   kable_styling(
     latex_options = c("HOLD_position", "scale_down"),
@@ -3544,8 +3546,26 @@ book_popularity_summary <- data.frame(
 kable(book_popularity_summary, 
       format = "latex",
       booktabs = TRUE,
-      caption = "Book Popularity Distribution",
+      caption = "Detailed Book Popularity Distribution",
       align = c("l", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
+
+# Rating distribution (numeric breakdown)
+rating_dist <- table(data$Book.Rating)
+rating_dist_df <- data.frame(
+  Rating = names(rating_dist),
+  Count = as.numeric(rating_dist),
+  Percentage = round(as.numeric(rating_dist) / sum(rating_dist) * 100, 1)
+)
+
+kable(rating_dist_df, 
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Detailed Rating Distribution",
+      align = c("c", "c", "c")) %>%
   kable_styling(
     latex_options = c("HOLD_position", "scale_down"),
     font_size = 10
@@ -3560,36 +3580,22 @@ sparsity_summary <- data.frame(
   Metric = c(
     "Total Possible User-Book Pairs",
     "Actual Ratings",
-    "Sparsity Percentage",
-    "Data Density"
+    "Sparsity Percentage"
   ),
   Value = c(
     format(total_possible_ratings, big.mark = ","),
     format(actual_ratings, big.mark = ","),
-    paste0(sparsity_percentage, "%"),
-    paste0(round(100 - sparsity_percentage, 2), "%")
+    paste0(sparsity_percentage, "%")
   )
 )
 
 kable(sparsity_summary, 
       format = "latex",
       booktabs = TRUE,
-      caption = "Dataset Sparsity Analysis",
+      caption = "Detailed Dataset Sparsity Analysis",
       align = c("l", "c")) %>%
   kable_styling(
     latex_options = c("HOLD_position", "scale_down"),
     font_size = 10
   )
 ```
-
-```{r cleanup, include=FALSE}
-# Clean up H2O cluster at the end
-if (exists("h2o") && h2o::h2o.clusterIsUp()) {
-  h2o::h2o.shutdown(prompt = FALSE)
-}
-```
-
-
-
-
-

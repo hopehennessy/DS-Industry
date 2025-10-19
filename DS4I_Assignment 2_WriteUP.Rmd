@@ -1,0 +1,248 @@
+
+---
+title: "Ensemble Recommender System for Book Recommendations: A Comparative Analysis of Collaborative Filtering Approaches"
+author: "Hope Hennessy"
+date: "2025-10-01"
+output:
+  pdf_document:
+    latex_engine: xelatex
+---
+
+##################### Abstract
+
+This study conducts a comprehensive comparative analysis of four collaborative filtering approaches for book recommendation systems using a modified Book-Crossing dataset. We implement item-based (IBCF) and user-based (UBCF) collaborative filtering from scratch, along with matrix factorization (MF) and neural network (NN) models, to develop an ensemble recommender system. The analysis evaluates cross-validated predictive accuracy, explores strategies for mitigating the cold start problem, and investigates how catalog size influences performance. Results show that matrix factorization achieves the lowest prediction error (RMSE = 1.820), while each approach exhibits distinct advantages depending on computational and deployment constraints. Incorporating confidence-weighted similarity improves prediction quality for memory-based methods by leveraging implicit feedback. Furthermore, accuracy gains plateau around 30–40 titles, suggesting diminishing returns beyond this range. These findings offer practical guidance for designing efficient hybrid recommenders in high-sparsity environments.
+
+############################## Things to address
+
+- why we include implicit in UBCF and IBCF and not MF and NN
+
+- should i have tested low l2 reg for MF instead of : L2 regularization parameters (0.01, 0.1)
+
+
+##############################
+
+
+# 1. Introduction
+
+## 1.1 Purpose and Context
+
+The exponential growth of digital content has led to information overload, making it increasingly difficult for users to identify relevant material. Recommender systems address this challenge by predicting user preferences and providing personalized suggestions. Among various approaches, collaborative filtering (CF) has proven particularly effective by inferring preferences from patterns in user–item interactions. CF methods underpin many large-scale platforms — including Amazon, Netflix, and Goodreads — driving user engagement and revenue through personalization.
+
+## 1.2 Research Objectives
+
+This study aims to build and evaluate four different recommender systems for predicting book ratings: (1) item-based collaborative filtering (coded from scratch), (2) user-based collaborative filtering (coded from scratch), (3) matrix factorization-based collaborative filtering (using recosystem package), and (4) neural network-based collaborative filtering (using H2O package). 
+
+We compare these methods using cross-validation, examine their robustness to new-user (cold start) scenarios, and analyze how catalog size influences predictive accuracy to identify the point at which additional titles yield minimal improvement.
+
+## 1.3 Dataset Overview
+
+The analysis employs a modified Book-Crossing dataset comprising 45,370 ratings from 10,000 users across 145 books. Ratings range from 0 to 10, where a zero indicates implicit feedback (“read but not rated”) and 1–10 represent explicit evaluations. This combination of implicit and explicit signals poses unique challenges for collaborative filtering, particularly in sparse rating environments.
+
+## 1.4 Methodological Approach
+
+Collaborative filtering methods are broadly categorized as memory-based or model-based. Memory-based algorithms (UBCF and IBCF) compute similarities directly from the user–item matrix and predict ratings via weighted averages of neighbors. Model-based techniques (MF and NN) learn latent representations that capture hidden preference patterns in lower-dimensional spaces. Each class offers distinct strengths depending on data sparsity, scalability, and computational cost.
+
+Book recommendation tasks are characterized by extreme sparsity—users rate only a small subset of available items—and cold start challenges for new users and books. To mitigate these issues, our implementation incorporates confidence-weighted similarity measures within memory-based methods, effectively leveraging implicit feedback to improve overall recommendation quality.
+
+# 2. Data Understanding and Preparation
+
+## 2.1 Data Description
+
+The dataset consists of three components: book_ratings, which records user–book interactions with variables User.ID, ISBN, and Book.Rating on a 0–10 scale; book_info, which provides metadata such as Book.Title and Book.Author; and user_info, which contains limited demographic details like age but is excluded from this analysis to focus on collaborative filtering. Ratings from 1–10 represent explicit feedback, where users actively rated books, while a rating of 0 indicates implicit feedback, meaning the user read the book but did not provide a score.
+
+
+
+## Exploratory Data Analysis
+
+
+The dataset contains 10,000 users, 145 books, and 45,370 total interactions (Table 1). The average rating is 3.16 (including implicit ratings as 0), while the explicit ratings mean is 7.8 on the 1-10 scale. Matrix sparsity is 96.87% before filtering and 99.2% after filtering. This extreme sparsity poses significant challenges for all collaborative filtering methods and motivates our confidence-weighting approach.
+
+
+The dataset exhibits characteristics typical of recommendation system challenges (Figure 1). Panel A shows the distribution of explicit ratings, which is right-skewed with a mean of 7.8, indicating that users tend to rate books they enjoy rather than books they dislike—a common positivity bias in explicit rating systems that can affect baseline predictions. Panel B reveals that user activity follows a long-tail distribution, with most users rating fewer than 10 books and a small subset of highly active users rating 20 or more, highlighting the sparsity problem central to collaborative filtering. Panel C examines book popularity and shows no strong correlation between the number of ratings a book receives and its average rating, suggesting that while users generally rate positively, this positivity does not systematically favor popular books over niche titles, thereby mitigating popularity bias concerns. Finally, Panel D indicates that 40.3% of the dataset consists of explicit ratings and 59.7% implicit feedback. To handle this mixed feedback, we apply confidence weighting in similarity calculations, assigning confidence = 0.5 to implicit ratings (rating 0 converted to 4) and confidence = 1.0 to explicit ratings, allowing us to leverage implicit feedback while appropriately down-weighting its influence.
+
+
+
+
+# 3. Methodology
+
+## 3.1 Data Preprocessing and Filtering
+
+Duplicate book entries, where the same title and author appeared under different ISBNs, were identified using normalized string matching. Titles and author names were converted to lowercase, with parenthetical text, subtitles, special characters, and extra whitespace removed, and author suffixes standardized. All duplicates were mapped to a canonical ISBN (the first alphabetically), and when users rated multiple versions of the same book, the highest rating was retained. This cleaning process reduced ambiguity and ensured consistent, high-quality data for collaborative filtering.
+
+To ensure meaningful and reliable collaborative filtering, we applied a dual-threshold filtering strategy that balanced data quality with dataset size. Books were required to have at least five ratings to ensure adequate interaction data for similarity calculations, and users were required to have rated at least three books to prevent sparse profiles from introducing noise. This process excluded approximately 58% of users with insufficient rating histories, leaving 4,200 active users, while all 145 books met the inclusion threshold. The resulting user–item matrix retained a sparsity level of 99.2%, reflecting the naturally sparse structure typical of real-world recommendation systems.
+
+
+## 3.2 User-Item Matrix Construction and Implicit Feedback
+
+Three matrices were constructed to manage the mixed explicit-implicit feedback. First, a ratings matrix converted implicit ratings (originally 0) to 4, providing a neutral-positive signal for user engagement without explicit ratings. Second, a confidence matrix assigned weights of 1.0 for explicit ratings (1–10) and 0.5 for implicit ratings, allowing implicit feedback to contribute to similarity calculations while appropriately down-weighting its influence. Third, the original ratings matrix, retaining raw 0–10 values, was preserved for evaluation, ensuring RMSE calculations reflected performance on explicit ratings only. This confidence-weighting strategy addresses sparsity by leveraging all user-item interactions while respecting the differing informational content of explicit and implicit feedback.
+
+## 3.3 Evaluation Framework
+
+Performance was evaluated using 5-fold cross-validation with root mean squared error (RMSE) as the primary metric. RMSE was chosen because it penalizes large prediction errors more heavily than mean absolute error (MAE), which is critical in recommendation systems where large mispredictions can severely degrade user experience. Importantly, RMSE was calculated only on explicit ratings (1–10 scale), excluding implicit feedback (0 ratings), to measure true prediction accuracy on user-expressed preferences.
+
+For each fold, 80% of the observed ratings were assigned to the training set and 20% to the test set. Test ratings were temporarily hidden in the training matrices by setting them to NA. The model was then trained on the remaining 80% of ratings, and predictions were generated for the hidden 20%. This ensures that the model does not see the test ratings during training, providing an unbiased assessment of predictive accuracy. Confidence weighting was applied consistently across memory-based methods to allow fair comparison.
+
+
+## 3.3 Collaborative Filtering Approaches
+
+### 3.3.1 User-Based Collaborative Filtering (UBCF)
+
+UBCF estimates a user's rating for an item by leveraging ratings from similar users, based on the principle that users with similar past preferences are likely to share future preferences.
+
+The method consists of three main steps: normalization, similarity computation, and prediction.
+
+First, user-mean normalization was applied to remove individual rating biases, centering each user's ratings around zero to make users with different rating scales directly comparable.
+
+Second, confidence-weighted cosine similarity was computed between users, where each co-rated item was weighted by its confidence value (1.0 for explicit ratings, 0.5 for implicit ratings). This approach identifies users with comparable rating patterns while accounting for the reliability of different feedback types.
+
+Third, predictions employed k-nearest neighbors ($k=50$) filtering to aggregate ratings from the most similar users while reducing noise from weakly similar users.
+
+Predicted ratings combine the target user's mean rating with a weighted average of normalized ratings from the most similar users, where weights reflect both user similarity and rating confidence.
+
+For cold-start users with five or fewer initial ratings, similarity to all existing users was computed based on overlap in rated items. Predictions for unrated items were generated using a weighted average of the $k=50$ most similar users' ratings, adjusted by the new user's mean rating to account for individual rating tendencies.
+
+
+### 3.3.2 Item-Based Collaborative Filtering (IBCF)
+
+IBCF estimates ratings based on item similarity rather than user similarity, operating under the assumption that users tend to prefer items similar to those they have previously liked. This approach is often more stable than UBCF in sparse datasets, as item relationships change less frequently than individual user preferences.
+
+The method follows a three-step process similar to UBCF, but applied to items. First, item-mean normalization was used to remove item-specific popularity biases, centering ratings for each item around zero. Second, confidence-weighted cosine similarity was computed between items based on co-rated users, with confidence values weighting each user's contribution to the similarity measure. Third, predictions employed k-nearest neighbors ($k=50$) filtering to aggregate the target user's ratings for the most similar items.
+
+Predicted ratings combine the target item's mean rating with a weighted average of the target user's normalized ratings for similar items, where weights reflect both item similarity and rating confidence. For cold-start users, similarity was computed between items the new user rated and all other items, and predictions were generated by aggregating the user's ratings for the most similar items.
+
+
+### 3.3.3 Matrix Factorization (MF)
+
+
+Matrix factorization decomposes the user-item rating matrix into lower-dimensional user and item latent factor matrices, capturing hidden preference patterns that may not be evident from raw ratings. The recosystem package was employed, implementing parallel stochastic gradient descent for efficient factorization.
+
+Hyperparameter tuning was performed via grid search over latent factor dimensions (10, 20, 30), learning rates (0.01, 0.05, 0.1), and L2 regularization parameters (0.01, 0.1) for both user and item factors. The optimal configuration was selected based on cross-validation performance. Models were trained for 100 iterations using 4 threads for parallel computation. Only explicit ratings (excluding 0) were used to ensure meaningful latent representations.
+
+
+
+For cold-start users, a hybrid approach was applied. The new user's bias was calculated as the difference between their mean rating and the global mean rating. Predictions for unrated items adjusted item mean ratings by this user bias, effectively assuming that new users exhibit average preferences modulated by their individual rating tendencies. This allows reasonable recommendations without requiring user-specific latent factors.
+
+
+
+### 3.3.4 Neural Network-Based Collaborative Filtering (NN)
+
+
+Neural network-based collaborative filtering was implemented using H2O's deep learning framework, with user-mean normalization applied to input ratings. The model learned complex non-linear relationships between users and items through dense embeddings of categorical User ID and Book ID features. Training employed adaptive learning rates with early stopping based on validation RMSE.
+
+Hyperparameter tuning was performed via grid search over 24 configurations, evaluating layer depths (1–3 layers), hidden unit counts (16–128), activation functions (Tanh, ReLU), and regularization strengths (0.00001–0.0001). The best configuration was selected based on five-fold cross-validation performance.
+
+Only explicit rating data were used for training. To address the cold-start problem, a similarity-based fallback strategy was implemented for new users without learned embeddings. This method computes cosine similarities between the new user’s normalized ratings and all existing user profiles, using the top 30 most similar users to generate weighted predictions for unrated books. This hybrid approach allows the neural network to provide plausible recommendations for cold-start users without retraining the model.
+
+
+
+## Cold Start Evaluation Methodology
+
+To assess cold start performance, we created a synthetic new user profile with ratings for 5 books randomly selected from the catalog. The new user provided ratings of [7, 8, 6, 5, 7] for these books, representing a typical mix of positive evaluations with moderate variation. Each method then generated top-10 book recommendations based solely on this limited profile. 
+
+
+## 3.5 Catalog Size Impact Analysis
+
+To investigate how catalog size affects prediction accuracy, we systematically varied the number of books available for training, selecting the most popular books ranked by total number of ratings for $N \in {5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 145}$. Users were filtered to include only those with at least three ratings within each catalog subset. For each catalog, per-user 80/20 train-test splits were applied, ensuring that the same books appeared in both sets and that each user contributed proportionally to training and testing. Matrix factorization models were trained on each catalog using previously identified hyperparameters. The analysis was repeated across five random seeds to assess robustness, with mean RMSE and standard error computed for each catalog size.
+
+
+
+
+
+
+
+
+
+
+
+# 4. Results and Evaluation
+
+## 4.1 Cross-Validation Performance Comparison
+
+The 5-fold cross-validation analysis revealed substantial differences in performance across the four collaborative filtering methods (Table 13, Figure 2). Matrix Factorization achieved the lowest RMSE of 1.820 (SD = 0.020), making it the most accurate approach for this dataset. Neural Networks performed comparably, with an RMSE of 1.899 (SD = 0.053), demonstrating that model-based methods substantially outperform memory-based techniques. Item-Based Collaborative Filtering achieved an RMSE of 2.746 (SD = 0.018), while User-Based Collaborative Filtering recorded 3.182 (SD = 0.047). The gap between the best (MF) and worst (UBCF) methods corresponds to a 43% reduction in prediction error, highlighting the importance of algorithm choice in sparse datasets.
+
+Prediction consistency, measured by standard deviation across folds, was generally low for all methods, indicating stable performance.
+
+
+## 4.2 Results
+
+Analysis of the 40 total recommendations (10 per method) reveals limited overlap across the four approaches, with only 7 unique titles appearing in multiple recommendation sets. This 17.5% overlap rate indicates substantial divergence in how each algorithm identifies suitable books for the same user, despite all methods operating on identical rating data.
+The strongest consensus emerges around Harry Potter and the Order of the Phoenix by J.K. Rowling, which appears in three of four methods (UBCF: 7.34, IBCF: 7.03, NN: 6.50). This three-method convergence represents the highest level of agreement observed in the dataset. Beyond this single title, no other book achieves more than two-method consensus, highlighting fundamental differences in how collaborative filtering approaches model user preferences.
+Six additional titles appear in exactly two methods: The Hobbit (IBCF: 6.49, MF: 5.54), Fahrenheit 451 (MF: 5.35, NN: 6.71), Tuesdays with Morrie (IBCF: 6.10, NN: 6.50), Watership Down (UBCF: 5.91, MF: 5.54), The Fellowship of the Ring (IBCF: 6.25, MF: 5.52), and The Da Vinci Code (IBCF: 6.30, MF: 7.47). These pairwise overlaps account for 15% of total recommendations, with notably different predicted ratings between methods for the same title—suggesting not just different recommendation sets, but different confidence levels in shared recommendations.
+
+
+
+
+## 4.3 Cold Start Recommendations
+
+
+For memory-based methods, the cold-start implementation remained consistent with their core algorithms. Both UBCF and IBCF rely on similarity calculations, which naturally extend to new users by computing similarities on-the-fly from their available ratings. As a result, these models behaved the same way for new and existing users, maintaining methodological consistency.
+
+In contrast, the Matrix Factorization and Neural Network models could not leverage their learned representations for unseen users, as no latent factors or embeddings existed. To enable predictions, both relied on fallback strategies: MF used item-mean predictions adjusted by user bias, while the NN model applied user-similarity calculations. These substitutes allowed predictions to be generated, but they did not utilize the models’ core representational mechanisms.
+
+Because the synthetic user had no true preference data, the evaluation assessed the plausibility and diversity of recommendations rather than accuracy. Predicted ratings should therefore be interpreted as relative confidence scores rather than measures of actual performance.
+
+
+
+## 4.4 Catalog Size Impact Analysis
+
+
+
+The analysis of catalog size reveals a non-monotonic relationship with prediction accuracy (Table 14, Figure [X]). Matrix Factorization achieved optimal performance at a catalog size of 50 books, with an RMSE of 1.815 ± 0.027, correspondng to a 10.4% improvement over the smallest catalog of 5 books (RMSE = 2.027). Performance remains stable across the 40–60 book range (RMSE 1.815–1.849), suggesting a “sweet spot” where the balance between data richness and model complexity is most favorable.
+
+The initial improvement phase is most pronounced between 5 and 10 books, where RMSE decreases sharply from 2.027 to 1.878 (7.3% improvement), highlighting the critical importance of minimum data density. Performance continues to improve through 20 books (RMSE = 1.841), after which gains become more modest and variable.
+
+Beyond the optimal range, additional books provide minimal benefit. At the full catalog size of 145 books, RMSE rises slightly to 1.833 ± 0.011, indicating that expanding the catalog beyond 50–60 items yields diminishing returns and may even introduce noise.
+
+Analysis of standard errors reveals that smaller catalogs (5–30 books) exhibit higher variability (SE 0.0153–0.0895), while larger catalogs (50+ books) demonstrate more consistent performance (SE 0.0057–0.0266). This increased stability reflects the model’s ability to learn robust patterns with sufficient training data, even when absolute accuracy plateaus.
+
+Sparsity increases steadily from 32.3% at 5 books to 94.0% at 145 books. Notably, the optimal performance at 50 books occurs at 86.7% sparsity, demonstrating that Matrix Factorization effectively handles high sparsity through latent factor modeling. This robustness highlights a key advantage of model-based collaborative filtering in sparse recommendation environments.
+
+
+
+
+
+
+
+# 5. Discussion
+
+This study compared four collaborative filtering approaches for book recommendation—two memory-based (UBCF, IBCF) and two model-based (MF, NN)—to understand how algorithm design, data sparsity, and catalog size influence accuracy and recommendation diversity.
+
+## 5.1 Comparative Model Performance
+
+Model-based methods substantially outperformed memory-based ones, confirming their superior robustness to data sparsity. Matrix Factorization achieved the best overall balance of accuracy and stability, while the Neural Network model performed comparably, reinforcing the advantage of latent representation learning in capturing hidden user–item structures. These results align with established findings that latent factor models generalize better than similarity-based techniques when data are sparse.
+
+In contrast, the memory-based algorithms (UBCF and IBCF) performed notably worse due to their reliance on explicit pairwise similarities, which become unreliable when users have limited rating overlap. The 43% performance gap between the best (MF) and worst (UBCF) models underscores how algorithmic structure critically shapes predictive accuracy under sparse conditions. Between the two, IBCF performed better—consistent with the notion that item–item relationships are more stable than user–user ones, as items exhibit recurring co-occurrence patterns even when individual user histories are incomplete.
+
+
+## 5.2 Divergence in Recommendation Outputs
+
+The 82.5% uniqueness among recommended titles highlights fundamental differences in how collaborative filtering approaches model user preferences. Memory-based methods (UBCF and IBCF) rely on explicit similarity metrics but operate on orthogonal principles: UBCF forms predictions from similar users, while IBCF uses item co-occurrence patterns. This explains the minimal overlap between them—only two shared titles—and UBCF’s higher uniqueness rate (70%), reflecting its sensitivity to individual rating behavior and tendency toward more personalized but less generalizable recommendations.
+
+Model-based approaches instead infer latent preference structures. Matrix Factorization captures linear relationships within a compact embedding space, producing more conservative, globally optimized predictions. Neural networks extend this to nonlinear mappings, revealing higher-order interactions that MF cannot represent directly. Their outputs overlapped on only one title, illustrating how different representational biases influence recommendation diversity even within model-based methods.
+
+The single title common to three models—Harry Potter and the Order of the Phoenix—likely reflects a strong global preference signal detectable across both similarity-based and latent approaches. Rating discrepancies for shared titles (up to 1.36 points) further suggest distinct confidence calibrations across algorithms, an insight that could inform ensemble methods aiming to blend complementary model behaviors.
+
+
+## 5.3 Cold-Start User Performance
+
+The cold-start analysis highlights a key methodological limitation in comparing collaborative filtering approaches within this study. Model-based methods—Matrix Factorization and Neural Networks—were disadvantaged by the need to use simplified fallback strategies that differ fundamentally from their core learning mechanisms. This explains their limited interpretability and weaker relevance to real-world cold-start scenarios.
+
+The findings underscore a fundamental trade-off: model-based methods achieve superior accuracy for existing users but require auxiliary strategies for new ones, while memory-based methods, though less accurate overall, remain algorithmically consistent across both cases. In practical systems, effective cold-start handling typically relies on hybrid solutions—such as integrating content-based features, transfer learning, or embedding initialization—to restore the representational advantages of model-based algorithms.
+
+Therefore, the cold-start results should not be interpreted as evidence that memory-based methods outperform model-based ones. Rather, they reveal the need for hybrid or extended designs when latent representation models face users with no prior interaction data.
+
+
+
+## 5.4 Catalog Size and Accuracy Dynamics
+
+The catalog size experiment revealed a non-monotonic relationship between dataset breadth and accuracy, with MF performance improving sharply up to 50 books (optimal RMSE = 1.815 ± 0.027) before plateauing and slightly worsening beyond that point. This indicates diminishing returns in predictive performance as the catalog expands beyond a critical density threshold.
+
+The improvement phase (5 → 50 books) coincides with rapidly increasing interaction diversity, enabling better estimation of user and item latent factors. However, once sufficient diversity is achieved, adding less-rated titles introduces noise that slightly degrades accuracy. The optimal performance at 86.7% sparsity demonstrates that MF effectively manages high sparsity but still benefits from a balanced ratio of users to items.
+
+The decreasing variability in RMSE beyond 50 books (SE < 0.03) also reflects greater model stability once sufficient data density is reached. Collectively, these findings suggest that recommender systems benefit most from moderate catalog sizes with adequate interaction density, rather than from maximizing the number of items without ensuring sufficient ratings per item.
+
+
+
+
+
+
