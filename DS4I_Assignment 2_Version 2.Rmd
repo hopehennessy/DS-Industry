@@ -65,7 +65,8 @@ knitr::opts_chunk$set(
   fig.height = 6,
   fig.show = "hold",
   out.width = "80%",
-  dpi = 300
+  dpi = 300,
+  crop = NULL
 )
 
 # Set random seed for reproducibility
@@ -100,12 +101,45 @@ options(
 )
 
 
+# ============================================================================
+# HELPER FUNCTIONS FOR TABLE FORMATTING
+# ============================================================================
+
+# Function to truncate long text for table display
+truncate_text <- function(text, max_length = 50) {
+  ifelse(nchar(text) > max_length, 
+         paste0(substr(text, 1, max_length - 3), "..."), 
+         text)
+}
+
+# Function to format recommendation tables consistently
+format_recommendation_table <- function(data, caption, method_name) {
+  data %>%
+    mutate(Rank = row_number()) %>%
+    mutate(
+      Book.Title = truncate_text(Book.Title, 50),
+      Book.Author = truncate_text(Book.Author, 25)
+    ) %>%
+    select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
+    kable(
+      format = "latex",
+      booktabs = TRUE,
+      caption = paste(method_name, caption),
+      digits = 2,
+      align = c("c", "l", "l", "c"),
+      col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
+    ) %>%
+    kable_styling(
+      latex_options = c("HOLD_position", "scale_down"),
+      font_size = 10
+    )
+}
+
 # Load saved results
 load('nn_tuning_results.Rdata')
 load('mf_tuning_results.Rdata')
 load('mf_final_model_mf.Rdata')
 load('mf_tuning_results.Rdata')
-load('nn_final_model_nn.Rdata') 
 load('all_cv_results.Rdata')
 load('dataset_size_analysis_complete.Rdata')
 
@@ -115,7 +149,7 @@ load('dataset_size_analysis_complete.Rdata')
 
 ## Data Loading and Initial Inspection
 
-```{r data-loading}
+```{r data-loading, include=FALSE}
 # ============================================================================
 # DATA LOADING
 # ============================================================================
@@ -142,9 +176,6 @@ missing_summary <- data.frame(
   )
 )
 
-kable(missing_summary,
-      caption = "Missing Values Summary") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
 ```
 
 ## Data Cleaning and Duplicate Handling
@@ -221,15 +252,43 @@ merge_ratings <- function(ratings_data, book_info_data, duplicates_data) {
       slice_max(Book.Rating, n = 1, with_ties = FALSE) %>%
       ungroup()
     
-    # Update book info
+    # Update book info with cleaned titles and authors
     book_info_updated <- book_info_data %>%
       left_join(all_books_mapping, by = "ISBN") %>%
       filter(ISBN == canonical_ISBN) %>%
+      mutate(
+        Book.Title = Book.Title %>%
+          gsub('\\(.*?\\)', '', .) %>%  # Remove parenthetical info
+          gsub('\\s*:\\s*.*$', '', .) %>%  # Remove subtitle after colon
+          gsub('\\s+', ' ', .) %>%  # Replace multiple spaces with single space
+          trimws(),  # Remove leading/trailing whitespace
+        Book.Author = Book.Author %>%
+          gsub('\\s+jr\\.*$', '', .) %>%  # Remove "Jr." suffixes
+          gsub('\\s+sr\\.*$', '', .) %>%  # Remove "Sr." suffixes
+          gsub('\\s+(iii|ii)$', '', .) %>%  # Remove "II", "III" suffixes
+          gsub('\\s+', ' ', .) %>%  # Replace multiple spaces with single space
+          trimws()  # Remove leading/trailing whitespace
+      ) %>%
       select(ISBN, Book.Title, Book.Author)
     
   } else {
     ratings_merged <- ratings_data
-    book_info_updated <- book_info_data
+    # Clean all book titles and authors even when no duplicates
+    book_info_updated <- book_info_data %>%
+      mutate(
+        Book.Title = Book.Title %>%
+          gsub('\\(.*?\\)', '', .) %>%  # Remove parenthetical info
+          gsub('\\s*:\\s*.*$', '', .) %>%  # Remove subtitle after colon
+          gsub('\\s+', ' ', .) %>%  # Replace multiple spaces with single space
+          trimws(),  # Remove leading/trailing whitespace
+        Book.Author = Book.Author %>%
+          gsub('\\s+jr\\.*$', '', .) %>%  # Remove "Jr." suffixes
+          gsub('\\s+sr\\.*$', '', .) %>%  # Remove "Sr." suffixes
+          gsub('\\s+(iii|ii)$', '', .) %>%  # Remove "II", "III" suffixes
+          gsub('\\s+', ' ', .) %>%  # Replace multiple spaces with single space
+          trimws()  # Remove leading/trailing whitespace
+      ) %>%
+      select(ISBN, Book.Title, Book.Author)
     all_books_mapping <- NULL
   }
   
@@ -243,12 +302,12 @@ merge_ratings <- function(ratings_data, book_info_data, duplicates_data) {
 # Execute merge
 merged_result <- merge_ratings(book_ratings, book_info, duplicates)
 
-# Report results
-cat("Original ratings:", nrow(book_ratings), "\n")
-cat("Merged ratings:", nrow(merged_result$ratings_merged), "\n")
-cat("Ratings removed:", nrow(book_ratings) - nrow(merged_result$ratings_merged), "\n")
-cat("Original unique books:", length(unique(book_info$ISBN)), "\n")
-cat("Final unique books:", length(unique(merged_result$book_info_updated$ISBN)), "\n")
+# Report results (commented out to avoid console output in PDF)
+# cat("Original ratings:", nrow(book_ratings), "\n")
+# cat("Merged ratings:", nrow(merged_result$ratings_merged), "\n")
+# cat("Ratings removed:", nrow(book_ratings) - nrow(merged_result$ratings_merged), "\n")
+# cat("Original unique books:", length(unique(book_info$ISBN)), "\n")
+# cat("Final unique books:", length(unique(merged_result$book_info_updated$ISBN)), "\n")
 
 # Create final clean dataset
 data <- merged_result$ratings_merged %>%
@@ -262,11 +321,12 @@ remaining_duplicates <- data %>%
   group_by(User.ID, ISBN) %>%
   filter(n() > 1)
 
-if (nrow(remaining_duplicates) == 0) {
-  cat("\n✓ No duplicate user-book pairs remain\n")
-} else {
-  cat("\n⚠ Warning:", nrow(remaining_duplicates), "duplicates remain\n")
-}
+# Verify no duplicates remain (commented out to avoid console output in PDF)
+# if (nrow(remaining_duplicates) == 0) {
+#   cat("\n✓ No duplicate user-book pairs remain\n")
+# } else {
+#   cat("\n⚠ Warning:", nrow(remaining_duplicates), "duplicates remain\n")
+# }
 ```
 
 
@@ -306,39 +366,15 @@ data_summary <- data.frame(
 )
 
 kable(data_summary,
-      caption = "Dataset Overview") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
-
-# ============================================================================
-# CRITICAL SPARSITY ANALYSIS
-# ============================================================================
-
-# Calculate sparsity metrics
-n_users <- length(unique(data$User.ID))
-n_books <- length(unique(data$ISBN))
-n_ratings <- nrow(data)
-n_explicit <- sum(data$Book.Rating > 0)
-
-sparsity_analysis <- data.frame(
-  Metric = c(
-    "Total Possible Ratings",
-    "Actual Ratings",
-    "Explicit Ratings Only",
-    "Overall Sparsity",
-    "Explicit-Only Sparsity"
-  ),
-  Value = c(
-    format(n_users * n_books, big.mark = ","),
-    format(n_ratings, big.mark = ","),
-    format(n_explicit, big.mark = ","),
-    paste0(round((1 - n_ratings/(n_users * n_books)) * 100, 2), "%"),
-    paste0(round((1 - n_explicit/(n_users * n_books)) * 100, 2), "%")
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Dataset Overview",
+      align = c("l", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
   )
-)
 
-kable(sparsity_analysis,
-      caption = "Critical Sparsity Analysis for Collaborative Filtering") %>%
-  kable_styling(bootstrap_options = c("striped", "hover"))
 
 # ============================================================================
 # FILTERING THRESHOLD IMPACT ANALYSIS
@@ -374,33 +410,38 @@ filtering_impact <- data.frame(
   )
 )
 
-kable(filtering_impact,
-      caption = "Impact of Minimum Rating Thresholds on Data Retention",
-      col.names = c("Metric", "Count", "Percentage")) %>%
-  kable_styling(bootstrap_options = c("striped", "hover")) 
 
-# Rating distribution with explicit/implicit distinction
-rating_dist <- data %>%
-  count(Book.Rating) %>%
-  mutate(
-    Type = ifelse(Book.Rating == 0, "Implicit (Read)", "Explicit (Rated)"),
-    Percentage = round(n / sum(n) * 100, 1)
-  ) %>%
-  select(Rating = Book.Rating, Type, Count = n, Percentage)
+# Rating distribution
+rating_dist <- table(data$Book.Rating)
+rating_dist_df <- data.frame(
+  Rating = names(rating_dist),
+  Count = as.numeric(rating_dist),
+  Percentage = round(as.numeric(rating_dist) / sum(rating_dist) * 100, 1)
+)
 
-kable(rating_dist,
-      caption = "Rating Distribution: Explicit vs Implicit Feedback") %>%
-  kable_styling(bootstrap_options = c("striped", "hover")) 
+kable(rating_dist_df, 
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Rating Distribution",
+      align = c("c", "c", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
+
+# Rating histogram
+hist(data$Book.Rating, main = "Distribution of Book Ratings",
+     col = "steelblue", xlab = "Rating", ylab = "Frequency")
 ```
 
-# Exploratory Data Analysis Visualizations
+
+"After applying minimum rating thresholds, 58% of users were excluded for having fewer than 3 ratings, while all 145 books in the dataset met the minimum threshold of 5 ratings per book."
+
+
+
 
 ```{r eda-visualizations, fig.cap="Key Dataset Characteristics for Recommender Systems. Panel A: Distribution of explicit ratings (1-10 scale) showing user rating patterns, with red dashed line indicating the mean rating. Panel B: User activity distribution showing the sparsity challenge in collaborative filtering, where most users interact with few books (long tail) while few users are highly active. Panel C: Relationship between book popularity and average rating quality, with red line showing the trend to understand rating biases and inform cold start problem solutions. Panel D: Proportion of explicit vs implicit feedback in the dataset, where explicit ratings (1-10) are used for model training while implicit ratings (0, read but not rated) are used with confidence weighting."}
-# ============================================================================
-# FOCUSED VISUALIZATIONS: MOST INFORMATIVE FOR RECOMMENDER SYSTEMS
-# ============================================================================
-
-# 1. EXPLICIT RATING DISTRIBUTION (Most Important)
+# EXPLICIT RATING DISTRIBUTION 
 explicit_data <- data %>% filter(Book.Rating > 0)
 
 p1 <- ggplot(explicit_data, aes(x = Book.Rating)) +
@@ -631,12 +672,6 @@ user_item_matrix <- matrix_result$ratings
 confidence_matrix <- matrix_result$confidence
 original_ratings_matrix <- matrix_result$original_ratings
 
-cat("=== Unified Matrix Information ===\n")
-cat("Users:", nrow(user_item_matrix), "\n")
-cat("Items:", ncol(user_item_matrix), "\n")
-cat("Sparsity:", round(mean(is.na(user_item_matrix)) * 100, 2), "%\n")
-cat("Explicit ratings:", sum(original_ratings_matrix[!is.na(original_ratings_matrix)] > 0), "\n")
-cat("Implicit ratings:", sum(original_ratings_matrix[!is.na(original_ratings_matrix)] == 0), "\n\n")
 ```
 
 
@@ -915,7 +950,7 @@ cross_validate_ubcf <- function(user_item_matrix,
   )
   
   for (fold in 1:n_folds) {
-    cat("Fold", fold, "of", n_folds, "... ")
+    # cat("Fold", fold, "of", n_folds, "... ")
     
     # Split data
     test_indices <- which(fold_indices == fold)
@@ -987,7 +1022,6 @@ cross_validate_ubcf <- function(user_item_matrix,
     metrics <- evaluate_predictions(predictions, actual, original_ratings)
     
     cv_results[fold, ] <- list(fold, metrics$rmse_explicit)
-    cat("RMSE:", round(metrics$rmse_explicit, 4), "\n")
   }
   
   return(cv_results)
@@ -1011,8 +1045,6 @@ user_similarity_matrix <- compute_user_similarity_matrix(
   confidence_matrix
 )
 
-cat("Similarity matrix computed\n\n")
-
 # Generate recommendations for existing user
 sample_user <- rownames(user_item_matrix)[3]
 
@@ -1030,13 +1062,27 @@ recs_ubcf <- recommend_for_user_ubcf(
 
 recs_ubcf %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "UBCF: Top 10 Recommendations for Existing User",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Generate recommendations for new user (cold start)
 sample_books <- colnames(user_item_matrix)[1:5]
@@ -1055,13 +1101,27 @@ new_user_recs_ubcf <- recommend_for_new_user_ubcf(
 
 new_user_recs_ubcf %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "UBCF: Top 10 Recommendations for New User (Cold Start)",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 ```
 
 
@@ -1319,7 +1379,7 @@ cross_validate_ibcf <- function(user_item_matrix,
   )
   
   for (fold in 1:n_folds) {
-    cat("Fold", fold, "of", n_folds, "... ")
+    # cat("Fold", fold, "of", n_folds, "... ")
     
     # Split data
     test_indices <- which(fold_indices == fold)
@@ -1394,7 +1454,7 @@ cross_validate_ibcf <- function(user_item_matrix,
     metrics <- evaluate_predictions(predictions, actual, original_ratings)
     
     cv_results[fold, ] <- list(fold, metrics$rmse_explicit)
-    cat("RMSE:", round(metrics$rmse_explicit, 4), "\n")
+    # cat("RMSE:", round(metrics$rmse_explicit, 4), "\n")
   }
   
   return(cv_results)
@@ -1418,7 +1478,7 @@ item_similarity_matrix <- compute_item_similarity_matrix(
   confidence_matrix
 )
 
-cat("Similarity matrix computed\n\n")
+# cat("Similarity matrix computed\n\n")
 
 # Generate recommendations for existing user
 sample_user <- rownames(user_item_matrix)[3]
@@ -1437,13 +1497,27 @@ recs_ibcf <- recommend_for_user_ibcf(
 
 recs_ibcf %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "IBCF: Top 10 Recommendations for Existing User",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Generate recommendations for new user (cold start)
 sample_books <- colnames(user_item_matrix)[1:5]
@@ -1463,13 +1537,27 @@ new_user_recs_ibcf <- recommend_for_new_user_ibcf(
 
 new_user_recs_ibcf %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "IBCF: Top 10 Recommendations for New User (Cold Start)",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 ```
 
@@ -1747,11 +1835,11 @@ cross_validate_mf <- function(user_item_matrix,
   )
   
   if (verbose) {
-    cat("Starting", n_folds, "-fold cross-validation...\n")
+    # cat("Starting", n_folds, "-fold cross-validation...\n")
   }
   
   for (fold in 1:n_folds) {
-    if (verbose) cat("Fold", fold, "of", n_folds, "... ")
+    # if (verbose) cat("Fold", fold, "of", n_folds, "... ")
     
     # Split data
     test_idx <- which(fold_indices == fold)
@@ -1820,7 +1908,7 @@ cross_validate_mf <- function(user_item_matrix,
     metrics <- evaluate_predictions(preds, actual, original)
     
     cv_results[fold, ] <- c(fold, metrics$rmse_explicit)
-    cat("RMSE:", round(metrics$rmse_explicit, 4), "\n")
+    # cat("RMSE:", round(metrics$rmse_explicit, 4), "\n")
   }
   
   return(cv_results)
@@ -1880,13 +1968,27 @@ recs_mf <- recommend_for_user_mf(
 
 recs_mf %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "MF: Top 10 Recommendations for Existing User",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Generate recommendations for new user (cold start)
 sample_books <- colnames(user_item_matrix)[1:5]
@@ -1903,13 +2005,27 @@ recs_new_mf <- recommend_for_new_user_mf(
 
 recs_new_mf %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "MF: Top 10 Recommendations for New User (Cold Start)",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Run cross-validation
 cv_results_mf <- cross_validate_mf(
@@ -1923,16 +2039,21 @@ cv_results_mf <- cross_validate_mf(
 
 cv_results_mf %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "MF: Cross-Validation Results",
     digits = 4,
     col.names = c("Fold", "RMSE"),
     align = c("c", "c")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
-cat("\n=== MF Performance Summary ===\n")
-cat("Mean RMSE:", round(mean(cv_results_mf$RMSE, na.rm = TRUE), 4), "\n")
-cat("SD RMSE:", round(sd(cv_results_mf$RMSE, na.rm = TRUE), 4), "\n")
+# cat("\n=== MF Performance Summary ===\n")
+# cat("Mean RMSE:", round(mean(cv_results_mf$RMSE, na.rm = TRUE), 4), "\n")
+# cat("SD RMSE:", round(sd(cv_results_mf$RMSE, na.rm = TRUE), 4), "\n")
 ```
 
 
@@ -1992,7 +2113,7 @@ prepare_h2o_data <- function(user_item_matrix, original_ratings_matrix = NULL) {
 # ============================================================================
 
 # Initialize H2O cluster
-h2o.init(ip = "localhost", port = 54321)
+suppressMessages(h2o.init(ip = "localhost", port = 54321))
 h2o.no_progress()
 
 # # Prepare data
@@ -2070,28 +2191,28 @@ h2o.no_progress()
 
 
 # Grid search results
-kable(all_models_df,
-      caption = "Neural Network Grid Search Results") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+kable(all_models_df %>% select(-model_ids),
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Neural Network Grid Search Results",
+      align = c("c", "c", "c", "c", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Best model results
 kable(best_nn_results,
-      caption = "Optimal Neural Network Configuration") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Optimal Neural Network Configuration",
+      align = c("c", "c", "c", "c", "c", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
-# Create visualization of architecture performance
-arch_plot <- ggplot(all_models_df, aes(x = factor(n_layers), y = as.numeric(rmse))) +
-  geom_boxplot(fill = "steelblue", alpha = 0.7) +
-  geom_jitter(width = 0.2, alpha = 0.3) +
-  labs(
-    title = "Neural Network Performance by Depth",
-    subtitle = "Distribution of RMSE across different network architectures",
-    x = "Number of Hidden Layers",
-    y = "Cross-Validation RMSE"
-  ) +
-  theme_minimal()
 
-print(arch_plot)
 
 # save(best_nn_results, grid_results, all_models_df, file = 'nn_tuning_results.Rdata') 
 ```
@@ -2343,11 +2464,11 @@ cross_validate_nn <- function(user_item_matrix,
     rmse = numeric(n_folds)
   )
   
-  cat("Starting", n_folds, "-fold cross-validation for Neural Network...\n")
-  cat("Training on EXPLICIT ratings only\n\n")
+  # cat("Starting", n_folds, "-fold cross-validation for Neural Network...\n")
+  # cat("Training on EXPLICIT ratings only\n\n")
   
   for (fold in 1:n_folds) {
-    cat("Fold", fold, "of", n_folds, "... ")
+    # cat("Fold", fold, "of", n_folds, "... ")
     
     # Split data
     test_indices <- which(fold_indices == fold)
@@ -2381,7 +2502,7 @@ cross_validate_nn <- function(user_item_matrix,
     
     if (nrow(train_data_explicit) == 0) {
       cv_results[fold, ] <- c(fold, NA)
-      cat("No explicit ratings - skipping\n")
+      # cat("No explicit ratings - skipping\n")
       next
     }
     
@@ -2443,7 +2564,7 @@ cross_validate_nn <- function(user_item_matrix,
     rmse_value <- sqrt(mean((predictions_denorm - actual_explicit)^2, na.rm = TRUE))
     
     cv_results[fold, ] <- list(fold, rmse_value)
-    cat("RMSE:", round(rmse_value, 4), "\n")
+    # cat("RMSE:", round(rmse_value, 4), "\n")
     
     # Cleanup
     h2o.rm(model)
@@ -2463,6 +2584,10 @@ cross_validate_nn <- function(user_item_matrix,
 # NN: MODEL TRAINING AND EVALUATION
 # ============================================================================
 
+# Initialize H2O cluster
+suppressMessages(h2o.init(ip = "localhost", port = 54321))
+h2o.no_progress()
+
 # Prepare data for final model
 prepared <- prepare_h2o_data(user_item_matrix, original_ratings_matrix)
 
@@ -2481,18 +2606,17 @@ train_h2o <- as.h2o(train_data_explicit[, c("user_id", "book_id", "rating")])
 train_h2o$user_id <- as.factor(train_h2o$user_id)
 train_h2o$book_id <- as.factor(train_h2o$book_id)
 
-# model_nn <- train_h2o_model(
-#   train_data = train_h2o,
-#   hidden = optimal_params_nn$hidden,
-#   epochs = optimal_params_nn$epochs,
-#   activation = optimal_params_nn$activation,
-#   l1 = optimal_params_nn$l1,
-#   l2 = optimal_params_nn$l2,
-#   verbose = FALSE
-# )
-# 
-# save(model_nn, file = 'nn_final_model_nn.Rdata')
 
+# Train new model
+model_nn <- train_h2o_model(
+  train_data = train_h2o,
+  hidden = optimal_params_nn$hidden,
+  epochs = optimal_params_nn$epochs,
+  activation = optimal_params_nn$activation,
+  l1 = optimal_params_nn$l1,
+  l2 = optimal_params_nn$l2,
+  verbose = FALSE)
+  
 # Generate recommendations for existing user
 sample_user <- rownames(user_item_matrix)[3]
 
@@ -2509,13 +2633,27 @@ recs_nn <- recommend_for_user_nn(
 
 recs_nn %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "NN: Top 10 Recommendations for Existing User",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Generate recommendations for new user (cold start)
 sample_books <- colnames(user_item_matrix)[1:5]
@@ -2533,13 +2671,27 @@ new_user_recs_nn <- recommend_for_new_user_nn(
 
 new_user_recs_nn %>%
   mutate(Rank = row_number()) %>%
+  mutate(
+    Book.Title = ifelse(nchar(Book.Title) > 50, 
+                      paste0(substr(Book.Title, 1, 47), "..."), 
+                      Book.Title),
+    Book.Author = ifelse(nchar(Book.Author) > 25, 
+                        paste0(substr(Book.Author, 1, 22), "..."), 
+                        Book.Author)
+  ) %>%
   select(Rank, Book.Title, Book.Author, Predicted_Rating) %>%
   kable(
+    format = "latex",
+    booktabs = TRUE,
     caption = "NN: Top 10 Recommendations for New User (Cold Start)",
     digits = 2,
-    align = c("c", "l", "l", "c")
+    align = c("c", "l", "l", "c"),
+    col.names = c("Rank", "Book Title", "Author", "Predicted Rating")
   ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 
 ```
@@ -2571,7 +2723,7 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
   )
   
   # User-Based CF
-  cat("=== Running User-Based CF ===\n")
+  # cat("=== Running User-Based CF ===\n")
   cv_results_ubcf <- cross_validate_ubcf(
     user_item_matrix,
     confidence_matrix,
@@ -2587,7 +2739,7 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
   )
   
   # Item-Based CF
-  cat("\n=== Running Item-Based CF ===\n")
+  # cat("\n=== Running Item-Based CF ===\n")
   cv_results_ibcf <- cross_validate_ibcf(
     user_item_matrix,
     confidence_matrix,
@@ -2603,7 +2755,7 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
   )
   
   # Matrix Factorization
-  cat("\n=== Running Matrix Factorization ===\n")
+  # cat("\n=== Running Matrix Factorization ===\n")
   cv_results_mf <- cross_validate_mf(
     user_item_matrix,
     original_ratings_matrix,
@@ -2620,7 +2772,7 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
   )
   
   # Neural Network
-  cat("\n=== Running Neural Network ===\n")
+  # cat("\n=== Running Neural Network ===\n")
   cv_results_nn <- cross_validate_nn(
     user_item_matrix,
     original_ratings_matrix,
@@ -2673,25 +2825,31 @@ run_comprehensive_cv_comparison <- function(user_item_matrix,
 # Display results
 kable(
   cv_comparison_results,
+  format = "latex",
+  booktabs = TRUE,
   caption = "Cross-Validation Performance Comparison - All Methods",
   col.names = c("Method", "Mean RMSE", "SD RMSE"),
   align = c("l", "c", "c")
 ) %>%
   kable_styling(
-    bootstrap_options = c("striped", "hover", "condensed"),
-    full_width = FALSE
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
   )
 
 
-h2o.shutdown(prompt = FALSE)
-  
-```
 
+```
 
 ```{r results-visualization, fig.cap="Performance Comparison Across Methods"}
 # ============================================================================
 # VISUALIZATION: PERFORMANCE COMPARISON
 # ============================================================================
+
+# Ensure H2O is available for any remaining operations
+if (!h2o::h2o.clusterIsUp()) {
+  suppressMessages(h2o::h2o.init(ip = "localhost", port = 54321))
+  h2o::h2o.no_progress()
+}
 
 # Create bar plot for RMSE comparison
 ggplot(cv_comparison_results, aes(x = reorder(Method, CV_RMSE_Mean), y = CV_RMSE_Mean)) +
@@ -2757,11 +2915,11 @@ analyze_catalog_sizes_fair <- function(data,
     summarise(n_ratings = n(), .groups = "drop") %>%
     arrange(desc(n_ratings))
   
-  cat("=== Fair Catalog Size Analysis ===\n")
-  cat("Method: Per-user 80/20 split on TOP N popular books\n")
-  cat("Minimum ratings per user:", min_user_ratings, "\n")
-  cat("Testing catalog sizes:", paste(catalog_sizes, collapse = ", "), "\n")
-  cat("Total catalog sizes to test:", length(catalog_sizes), "\n\n")
+  # cat("=== Fair Catalog Size Analysis ===\n")
+  # cat("Method: Per-user 80/20 split on TOP N popular books\n")
+  # cat("Minimum ratings per user:", min_user_ratings, "\n")
+  # cat("Testing catalog sizes:", paste(catalog_sizes, collapse = ", "), "\n")
+  # cat("Total catalog sizes to test:", length(catalog_sizes), "\n\n")
   
   # Verify we have enough books
   if (nrow(book_popularity) < max(catalog_sizes)) {
@@ -2771,7 +2929,7 @@ analyze_catalog_sizes_fair <- function(data,
   
   # Process each catalog size
   for (n_books in catalog_sizes) {
-    cat("=== Catalog Size:", n_books, "books ===\n")
+    # cat("=== Catalog Size:", n_books, "books ===\n")
     
     # Select TOP N most popular books
     selected_books <- head(book_popularity$ISBN, n_books)
@@ -2793,12 +2951,12 @@ analyze_catalog_sizes_fair <- function(data,
     n_eligible <- length(eligible_users)
     n_total_ratings <- nrow(data_subset_filtered)
     
-    cat("Selected", length(selected_books), "books\n")
-    cat("Eligible users (>=", min_user_ratings, "ratings):", n_eligible, "\n")
-    cat("Total ratings from eligible users:", n_total_ratings, "\n")
+    # cat("Selected", length(selected_books), "books\n")
+    # cat("Eligible users (>=", min_user_ratings, "ratings):", n_eligible, "\n")
+    # cat("Total ratings from eligible users:", n_total_ratings, "\n")
     
     if (n_eligible < 10) {
-      cat("SKIP: Not enough eligible users\n\n")
+      # cat("SKIP: Not enough eligible users\n\n")
       
       all_results <- rbind(all_results, data.frame(
         catalog_size = n_books,
@@ -2821,7 +2979,7 @@ analyze_catalog_sizes_fair <- function(data,
       current_seed <- base_seed + seed_num
       set.seed(current_seed)
       
-      cat("  Seed", seed_num, "of", n_seeds, "...")
+      # cat("  Seed", seed_num, "of", n_seeds, "...")
       
       # ================================================================
       # CRITICAL: PER-USER 80/20 SPLIT
@@ -2850,8 +3008,8 @@ analyze_catalog_sizes_fair <- function(data,
       train_data_final <- bind_rows(train_data_list)
       test_data_final <- bind_rows(test_data_list)
       
-      cat("Train:", nrow(train_data_final), "ratings, ",
-          "Test:", nrow(test_data_final), "ratings...")
+      # cat("Train:", nrow(train_data_final), "ratings, ",
+      #     "Test:", nrow(test_data_final), "ratings...")
       
       # ================================================================
       # CREATE MATRICES
@@ -2909,7 +3067,7 @@ analyze_catalog_sizes_fair <- function(data,
       n_train_explicit <- nrow(train_data_explicit)
       
       if (n_train_explicit < 10) {
-        cat(" SKIP (only", n_train_explicit, "explicit training ratings)\n")
+        # cat(" SKIP (only", n_train_explicit, "explicit training ratings)\n")
         
         all_results <- rbind(all_results, data.frame(
           catalog_size = n_books,
@@ -3007,7 +3165,7 @@ analyze_catalog_sizes_fair <- function(data,
       n_test_explicit <- sum(valid_mask)
       
       if (n_test_explicit == 0) {
-        cat(" SKIP (no valid explicit test ratings)\n")
+        # cat(" SKIP (no valid explicit test ratings)\n")
         
         all_results <- rbind(all_results, data.frame(
           catalog_size = n_books,
@@ -3046,13 +3204,13 @@ analyze_catalog_sizes_fair <- function(data,
         reason = "Success"
       ))
       
-      cat(" RMSE =", round(rmse, 4), "\n")
+      # cat(" RMSE =", round(rmse, 4), "\n")
     }
     
-    cat("\n")
+    # cat("\n")
   }
   
-  cat("=== Analysis Complete ===\n\n")
+  # cat("=== Analysis Complete ===\n\n")
   
   # ================================================================
   # AGGREGATE RESULTS
@@ -3113,17 +3271,23 @@ analyze_catalog_sizes_fair <- function(data,
 kable(
   size_impact_results %>% 
     select(catalog_size, rmse_mean, rmse_se, sparsity_mean),
+  format = "latex",
+  booktabs = TRUE,
   caption = "Impact of Catalog Size on Prediction Accuracy",
   digits = 4,
   col.names = c("Catalog Size", "Mean RMSE", "SE", "Sparsity %"),
   align = c("c", "c", "c", "c")
 ) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 ```
 
 
-```{r dataset-size-visualization, fig.cap="Comprehensive Dataset Size Impact Analysis Results. Panel A shows RMSE trends across 17 catalog sizes with error bars. Panel B displays sparsity patterns. Panel C reveals the relationship between sparsity and accuracy. Panel D shows individual seed variability.", fig.width=12, fig.height=10}
+```{r dataset-size-visualization, fig.cap="Dataset Size Impact Analysis: RMSE trends across catalog sizes with error bars and optimal size highlighted."}
 
+# RMSE Trend with Error Bars
 ggplot(size_impact_results, aes(x = catalog_size, y = rmse_mean)) +
   geom_line(color = "steelblue", size = 1.2) +
   geom_point(color = "steelblue", size = 3) +
@@ -3131,11 +3295,12 @@ ggplot(size_impact_results, aes(x = catalog_size, y = rmse_mean)) +
                 width = 3, color = "steelblue", alpha = 0.7) +
   geom_point(data = size_impact_results[which.min(size_impact_results$rmse_mean), ],
              color = "red", size = 5, shape = 18) +
-  labs(title = "A. RMSE by Catalog Size (17 Sizes)",
+  labs(title = "A. RMSE by Catalog Size",
        subtitle = "Error bars show ±1 SE across 5 seeds. Red diamond indicates optimal size.",
        x = "Number of Books", y = "Mean RMSE") +
   theme_minimal() +
   theme(plot.title = element_text(face = "bold", size = 14))
+
 
 
 ```
@@ -3280,23 +3445,17 @@ data_summary <- data.frame(
   )
 )
 
-kable(data_summary, caption = "Dataset Summary") %>%
-  kable_styling(latex_options = "HOLD_position")
+kable(data_summary, 
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Dataset Summary",
+      align = c("l", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
-# Rating distribution
-rating_dist <- table(data$Book.Rating)
-rating_dist_df <- data.frame(
-  Rating = names(rating_dist),
-  Count = as.numeric(rating_dist),
-  Percentage = round(as.numeric(rating_dist) / sum(rating_dist) * 100, 1)
-)
 
-kable(rating_dist_df, caption = "Rating Distribution") %>%
-  kable_styling(latex_options = "HOLD_position")
-
-# Rating histogram
-hist(data$Book.Rating, main = "Distribution of Book Ratings",
-     col = "steelblue", xlab = "Rating", ylab = "Frequency")
 
 # ================================================================
 # USER AND BOOK ACTIVITY ANALYSIS
@@ -3346,8 +3505,15 @@ user_activity_summary <- data.frame(
   )
 )
 
-kable(user_activity_summary, caption = "User Activity Distribution") %>%
-  kable_styling(latex_options = "HOLD_position")
+kable(user_activity_summary, 
+      format = "latex",
+      booktabs = TRUE,
+      caption = "User Activity Distribution",
+      align = c("l", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Book popularity summary table
 book_popularity_summary <- data.frame(
@@ -3375,8 +3541,15 @@ book_popularity_summary <- data.frame(
   )
 )
 
-kable(book_popularity_summary, caption = "Book Popularity Distribution") %>%
-  kable_styling(latex_options = "HOLD_position")
+kable(book_popularity_summary, 
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Book Popularity Distribution",
+      align = c("l", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
 
 # Dataset sparsity analysis
 total_possible_ratings <- length(unique(data$User.ID)) * length(unique(data$ISBN))
@@ -3398,8 +3571,22 @@ sparsity_summary <- data.frame(
   )
 )
 
-kable(sparsity_summary, caption = "Dataset Sparsity Analysis") %>%
-  kable_styling(latex_options = "HOLD_position")
+kable(sparsity_summary, 
+      format = "latex",
+      booktabs = TRUE,
+      caption = "Dataset Sparsity Analysis",
+      align = c("l", "c")) %>%
+  kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 10
+  )
+```
+
+```{r cleanup, include=FALSE}
+# Clean up H2O cluster at the end
+if (exists("h2o") && h2o::h2o.clusterIsUp()) {
+  h2o::h2o.shutdown(prompt = FALSE)
+}
 ```
 
 
