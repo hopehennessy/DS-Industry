@@ -2718,1212 +2718,6 @@ ggplot(cv_comparison_results, aes(x = reorder(Method, CV_RMSE_Mean), y = CV_RMSE
 # Dataset Size Impact Analysis
 
 
-```{r dataset-size-impact-analysis}
-# ============================================================================
-# DATASET SIZE IMPACT ANALYSIS - ENHANCED APPROACH
-# ============================================================================
-# Research Question: How many book titles does a recommender system need
-# to achieve good prediction accuracy?
-# 
-# Methodology:
-# 1. For each catalog size (5, 10, 20, 30, 50, 75, 100, 145 books)
-# 2. RANDOMLY sample N books from the full dataset
-# 3. Split 80/20, train MF model, evaluate RMSE
-# 4. Run 5 times with different random seeds
-# 5. Analyze sparsity impact and data quality metrics
-# 6. Identify diminishing returns point
-#
-# Key: Random sampling eliminates popularity confound - each catalog size
-# gets a representative mix of popular and unpopular books
-# ============================================================================
-
-# Helper function to create result row
-create_result_row <- function(n_books, user_item_matrix, n_ratings, explicit_ratings, avg_rating, sparsity, rmse = NA) {
-  data.frame(
-    n_books = n_books,
-    n_books_in_matrix = ncol(user_item_matrix),
-    n_users = nrow(user_item_matrix),
-    total_ratings = n_ratings,
-    explicit_ratings = explicit_ratings,
-    avg_rating = avg_rating,
-    sparsity_pct = round(sparsity, 1),
-    rmse = rmse
-  )
-}
-
-# Helper function to make predictions
-make_predictions <- function(model_mf, test_obs, user_item_matrix, prepared_mf) {
-  predictions <- numeric(nrow(test_obs))
-  
-  for (i in 1:nrow(test_obs)) {
-    user_id <- rownames(user_item_matrix)[test_obs[i, 1]]
-    book_id <- colnames(user_item_matrix)[test_obs[i, 2]]
-    
-    mf_user_idx <- which(prepared_mf$user_ids$user_id == user_id) - 1
-    mf_item_idx <- which(prepared_mf$item_ids$item_id == book_id) - 1
-    
-    pred_set <- data_memory(user_index = mf_user_idx, item_index = mf_item_idx, index1 = FALSE)
-    pred <- model_mf$predict(pred_set, out_memory())
-    predictions[i] <- pmax(pmin(pred, 10), 1)
-  }
-  
-  return(predictions)
-}
-
-# Main analysis function
-analyze_catalog_sizes_enhanced <- function(data, 
-                                          catalog_sizes = c(5, 10, 20, 30, 50, 75, 100, 145),
-                                          optimal_params_mf,
-                                          test_fraction = 0.2,
-                                          min_ratings_per_book = 5,
-                                          min_ratings_per_user = 3,
-                                          seed = 123) {
-  
-  set.seed(seed)
-  results <- data.frame()
-  all_books <- unique(data$ISBN)
-  
-  cat("=== Dataset Size Analysis (Seed:", seed, ") ===\n")
-  
-  if (length(all_books) < max(catalog_sizes)) {
-    stop("Not enough books in dataset for requested catalog sizes")
-  }
-  
-  for (n_books in catalog_sizes) {
-    cat("  Catalog:", n_books, "books...")
-    
-    # Sample books and create matrix
-    sampled_books <- sample(all_books, n_books)
-    data_n <- data %>% filter(ISBN %in% sampled_books)
-    
-    matrix_result <- create_user_item_matrix(
-      data_n, min_ratings_per_book, min_ratings_per_user, 4, 0.5
-    )
-    
-    user_item_matrix <- matrix_result$ratings
-    original_matrix <- matrix_result$original_ratings
-    
-    # Calculate metrics
-    observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-    n_ratings <- nrow(observed)
-    sparsity <- mean(is.na(user_item_matrix)) * 100
-    explicit_ratings <- sum(original_matrix[observed] > 0, na.rm = TRUE)
-    avg_rating <- mean(user_item_matrix[observed], na.rm = TRUE)
-    
-    # Skip if insufficient data
-    if (n_ratings < 20) {
-      cat(" SKIP (insufficient ratings)\n")
-      results <- rbind(results, create_result_row(n_books, user_item_matrix, n_ratings, explicit_ratings, avg_rating, sparsity))
-      next
-    }
-    
-    # Train/test split
-    n_test <- floor(test_fraction * n_ratings)
-    test_indices <- sample(1:n_ratings, n_test)
-    train_indices <- setdiff(1:n_ratings, test_indices)
-    
-    train_obs <- observed[train_indices, , drop = FALSE]
-    test_obs <- observed[test_indices, , drop = FALSE]
-    
-    # Create training matrix
-    train_matrix <- user_item_matrix
-    train_original <- original_matrix
-    train_matrix[test_obs] <- NA
-    train_original[test_obs] <- NA
-    
-    # Train model
-    prepared_mf <- prepare_recosystem_data(train_matrix, train_original)
-    n_explicit_train <- nrow(prepared_mf$train_data)
-    
-    if (n_explicit_train < 10) {
-      cat(" SKIP (insufficient training data)\n")
-      results <- rbind(results, create_result_row(n_books, user_item_matrix, n_ratings, explicit_ratings, avg_rating, sparsity))
-      next
-    }
-    
-    model_mf <- train_reco_model(
-      train_data = prepared_mf$train_data,
-      n_factors = optimal_params_mf$min$dim,
-      learning_rate = optimal_params_mf$min$lrate,
-      costp_l2 = optimal_params_mf$min$costp_l2,
-      costq_l2 = optimal_params_mf$min$costq_l2,
-      n_iter = 50, n_threads = 4, verbose = FALSE
-    )
-    
-    # Make predictions and calculate RMSE
-    predictions <- make_predictions(model_mf, test_obs, user_item_matrix, prepared_mf)
-    
-    test_original_ratings <- original_matrix[test_obs]
-    explicit_mask <- test_original_ratings > 0
-    n_explicit_test <- sum(explicit_mask)
-    
-    if (n_explicit_test == 0) {
-      cat(" SKIP (no explicit test ratings)\n")
-      results <- rbind(results, create_result_row(n_books, user_item_matrix, n_ratings, explicit_ratings, avg_rating, sparsity))
-      next
-    }
-    
-    actual_explicit <- user_item_matrix[test_obs][explicit_mask]
-    pred_explicit <- predictions[explicit_mask]
-    rmse <- sqrt(mean((pred_explicit - actual_explicit)^2, na.rm = TRUE))
-    
-    cat(" RMSE:", round(rmse, 4), "\n")
-    results <- rbind(results, create_result_row(n_books, user_item_matrix, n_ratings, explicit_ratings, avg_rating, sparsity, rmse))
-  }
-  
-  return(results)
-}
-
-# ============================================================================
-# RUN MULTI-SEED ANALYSIS
-# ============================================================================
-
-cat("=== Running Multi-Seed Analysis ===\n")
-cat("Testing catalog sizes: 5, 10, 20, 30, 50, 75, 100, 145 books\n")
-cat("Each size evaluated 5 times with different random samples\n\n")
-
-n_seeds <- 5
-all_results <- data.frame()
-
-for (seed_val in 1:n_seeds) {
-  cat("Seed", seed_val, "of", n_seeds, "\n")
-  results_temp <- analyze_catalog_sizes_enhanced(
-    data, 
-    catalog_sizes = c(5, 10, 20, 30, 50, 75, 100, 145), 
-    optimal_params_mf, 
-    seed = seed_val + 122
-  )
-  results_temp$seed <- seed_val
-  all_results <- rbind(all_results, results_temp)
-}
-
-cat("\n=== Multi-Seed Analysis Complete ===\n\n")
-
-# ============================================================================
-# AGGREGATE RESULTS ACROSS SEEDS
-# ============================================================================
-
-size_impact_results <- all_results %>%
-  group_by(n_books) %>%
-  summarise(
-    rmse_mean = mean(rmse, na.rm = TRUE),
-    rmse_sd = sd(rmse, na.rm = TRUE),
-    rmse_se = sd(rmse, na.rm = TRUE) / sqrt(sum(!is.na(rmse))),
-    n_users_mean = round(mean(n_users, na.rm = TRUE), 0),
-    sparsity_pct_mean = round(mean(sparsity_pct, na.rm = TRUE), 1),
-    explicit_ratings_mean = round(mean(explicit_ratings, na.rm = TRUE), 0),
-    n_valid_runs = sum(!is.na(rmse)),
-    .groups = "drop"
-  ) %>%
-  mutate(
-    rmse_change = rmse_mean - lag(rmse_mean),
-    improvement = -rmse_change,
-    percent_improvement = -rmse_change / lag(rmse_mean) * 100
-  )
-
-size_impact_results_individual <- all_results
-
-# ============================================================================
-# DISPLAY AGGREGATED RESULTS
-# ============================================================================
-
-kable(
-  size_impact_results %>% 
-    select(n_books, rmse_mean, rmse_se, sparsity_pct_mean, explicit_ratings_mean, n_valid_runs),
-  caption = "Impact of Catalog Size on Accuracy (5-Seed Average, Random Sampling)",
-  digits = 4,
-  col.names = c("Books", "Mean RMSE", "SE", "Avg Sparsity %", "Avg Explicit Ratings", "Valid Runs"),
-  align = c("c", "c", "c", "c", "c", "c")
-) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
-  row_spec(which.min(size_impact_results$rmse_mean), 
-           bold = TRUE, color = "white", background = "#4CAF50") %>%
-  footnote(
-    general = "Random sampling: each catalog size gets random mix of books. Results averaged over 5 independent runs.",
-    general_title = "Note:"
-  )
-
-# ============================================================================
-# SPARSITY ANALYSIS
-# ============================================================================
-
-cat("\n=== SPARSITY IMPACT ANALYSIS ===\n\n")
-
-# Calculate sparsity-RMSE correlation from aggregated results
-if (nrow(size_impact_results %>% filter(!is.na(rmse_mean))) >= 3) {
-  sparsity_summary <- size_impact_results %>%
-    filter(!is.na(rmse_mean)) %>%
-    summarise(
-      avg_sparsity = mean(sparsity_pct_mean),
-      avg_rmse = mean(rmse_mean),
-      sparsity_rmse_correlation = cor(sparsity_pct_mean, rmse_mean, use = "complete.obs")
-    )
-  
-  kable(
-    sparsity_summary, 
-    caption = "Sparsity-RMSE Relationship", 
-    digits = 3,
-    col.names = c("Avg Sparsity %", "Avg RMSE", "Correlation")
-  ) %>%
-    kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
-  
-  cat("\nInterpretation:\n")
-  if (sparsity_summary$sparsity_rmse_correlation > 0.5) {
-    cat("  ⚠ Strong positive correlation (", round(sparsity_summary$sparsity_rmse_correlation, 2), 
-        "): Higher sparsity → Worse RMSE\n")
-    cat("  → Random sampling increases sparsity as catalog grows\n")
-    cat("  → Sparsity effect dominates any benefit from more books\n")
-  } else if (sparsity_summary$sparsity_rmse_correlation < -0.5) {
-    cat("  ✓ Strong negative correlation: More data → Better RMSE\n")
-  } else {
-    cat("  • Weak correlation: Mixed effects\n")
-  }
-}
-
-# ============================================================================
-# KEY FINDINGS
-# ============================================================================
-
-cat("\n=== KEY FINDINGS ===\n\n")
-
-valid_results <- size_impact_results %>% filter(!is.na(rmse_mean))
-
-if (nrow(valid_results) >= 2) {
-  best_idx <- which.min(valid_results$rmse_mean)
-  worst_idx <- which.max(valid_results$rmse_mean)
-  
-  cat("Best Performance:\n")
-  cat("  ", valid_results$n_books[best_idx], "books: RMSE =", 
-      round(valid_results$rmse_mean[best_idx], 4), "±", 
-      round(valid_results$rmse_se[best_idx], 4), "\n")
-  cat("  Sparsity:", valid_results$sparsity_pct_mean[best_idx], "%\n\n")
-  
-  cat("Worst Performance:\n")
-  cat("  ", valid_results$n_books[worst_idx], "books: RMSE =", 
-      round(valid_results$rmse_mean[worst_idx], 4), "±", 
-      round(valid_results$rmse_se[worst_idx], 4), "\n")
-  cat("  Sparsity:", valid_results$sparsity_pct_mean[worst_idx], "%\n\n")
-  
-  # Calculate if difference is significant (2 SE rule)
-  diff <- abs(valid_results$rmse_mean[best_idx] - valid_results$rmse_mean[worst_idx])
-  combined_se <- sqrt(valid_results$rmse_se[best_idx]^2 + valid_results$rmse_se[worst_idx]^2)
-  
-  cat("Statistical Significance:\n")
-  if (diff > 2 * combined_se) {
-    cat("  ✓ Difference is statistically significant (> 2 SE)\n")
-    cat("  → Performance really does vary with catalog size\n")
-  } else {
-    cat("  ✗ Difference is NOT statistically significant (< 2 SE)\n")
-    cat("  → Catalog size has minimal impact on accuracy\n")
-    cat("  → Random variation dominates\n")
-  }
-}
-
-# ============================================================================
-# MARGINAL IMPROVEMENTS TABLE
-# ============================================================================
-
-cat("\n=== MARGINAL IMPROVEMENTS ANALYSIS ===\n\n")
-
-kable(
-  size_impact_results %>%
-    select(n_books, rmse_mean, rmse_change, improvement, percent_improvement) %>%
-    mutate(
-      interpretation = case_when(
-        is.na(improvement) ~ "Baseline",
-        improvement > 0.05 ~ "Strong improvement",
-        improvement > 0.02 ~ "Moderate improvement",
-        improvement > 0.01 ~ "Small improvement",
-        improvement > 0 ~ "Minimal improvement",
-        TRUE ~ "Degradation"
-      )
-    ),
-  caption = "Marginal Changes by Catalog Size",
-  digits = 4,
-  col.names = c("Books", "Mean RMSE", "RMSE Change", "Improvement", "% Change", "Interpretation"),
-  align = c("c", "c", "c", "c", "c", "l")
-) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
-
-# ============================================================================
-# PRACTICAL RECOMMENDATIONS
-# ============================================================================
-
-cat("\n=== PRACTICAL RECOMMENDATIONS ===\n\n")
-
-cat("Based on this analysis:\n\n")
-
-cat("1. RANDOM SAMPLING INSIGHTS:\n")
-cat("   • Random book selection increases matrix sparsity\n")
-cat("   • Sparsity often dominates any benefit from catalog expansion\n")
-cat("   • Smaller, denser catalogs may outperform larger, sparse ones\n\n")
-
-cat("2. ALTERNATIVE APPROACHES TO CONSIDER:\n")
-cat("   ✓ Curated catalogs (popular books only)\n")
-cat("   ✓ Lower minimum rating thresholds\n")
-cat("   ✓ Hybrid models combining content + collaborative filtering\n")
-cat("   ✓ Focus on user engagement rather than catalog size\n\n")
-
-cat("3. KEY TAKEAWAY:\n")
-cat("   Quality > Quantity in sparse collaborative filtering scenarios\n")
-cat("   A well-curated small catalog often beats a large random catalog\n\n")
-
-```
-
-```{r visualization, fig.cap="Dataset Size Impact Analysis. Panel A: RMSE by catalog size showing performance trends. Panel B: Sparsity increases with catalog size. Panel C: Sparsity-RMSE correlation reveals the fundamental tradeoff. Panel D: Individual seed runs show variability.", fig.width=12, fig.height=10}
-# ============================================================================
-# VISUALIZATION
-# ============================================================================
-
-# Panel A: RMSE Trend (Multi-seed)
-valid_results <- size_impact_results %>% filter(!is.na(rmse_mean))
-
-if (nrow(valid_results) >= 2) {
-  p1 <- ggplot(valid_results, aes(x = n_books, y = rmse_mean)) +
-    geom_line(color = "steelblue", size = 1.2) +
-    geom_point(color = "steelblue", size = 3) +
-    geom_errorbar(aes(ymin = rmse_mean - rmse_se, ymax = rmse_mean + rmse_se),
-                  width = 3, color = "steelblue", alpha = 0.5) +
-    geom_point(data = valid_results[which.min(valid_results$rmse_mean), ],
-               color = "red", size = 5, shape = 18) +
-    labs(title = "RMSE by Catalog Size (Random Sampling)",
-         subtitle = "Error bars show ±1 SE across 5 seeds",
-         x = "Number of Books", y = "Mean RMSE") +
-    theme_minimal() +
-    theme(plot.title = element_text(face = "bold"))
-} else {
-  p1 <- ggplot() + theme_void()
-}
-
-# Panel B: Sparsity Trend
-if (nrow(valid_results) >= 2) {
-  p2 <- ggplot(valid_results, aes(x = n_books, y = sparsity_pct_mean)) +
-    geom_line(color = "coral", size = 1.2) +
-    geom_point(color = "coral", size = 3) +
-    labs(title = "Matrix Sparsity by Catalog Size",
-         subtitle = "Random sampling increases sparsity",
-         x = "Number of Books", y = "Sparsity (%)") +
-    theme_minimal() +
-    theme(plot.title = element_text(face = "bold"))
-} else {
-  p2 <- ggplot() + theme_void()
-}
-
-# Panel C: Sparsity vs RMSE (from aggregated multi-seed data)
-if (nrow(valid_results) >= 3) {
-  p3 <- ggplot(valid_results, aes(x = sparsity_pct_mean, y = rmse_mean)) +
-    geom_point(size = 3, alpha = 0.7, color = "darkgreen") +
-    geom_smooth(method = "lm", se = TRUE, color = "darkgreen", fill = "darkgreen", alpha = 0.2) +
-    labs(title = "Sparsity-RMSE Relationship",
-         subtitle = "Higher sparsity generally → worse accuracy",
-         x = "Mean Sparsity (%)", y = "Mean RMSE") +
-    theme_minimal() +
-    theme(plot.title = element_text(face = "bold"))
-} else {
-  p3 <- ggplot() + theme_void()
-}
-
-# Panel D: Individual Runs
-if (exists("size_impact_results_individual") && nrow(size_impact_results_individual %>% filter(!is.na(rmse))) >= 5) {
-  p4 <- ggplot(size_impact_results_individual %>% filter(!is.na(rmse)), 
-               aes(x = n_books, y = rmse, group = seed, color = factor(seed))) +
-    geom_line(alpha = 0.5, size = 0.8) +
-    geom_point(alpha = 0.5, size = 2) +
-    geom_line(data = valid_results, aes(x = n_books, y = rmse_mean, group = 1),
-              color = "black", size = 1.2, inherit.aes = FALSE) +
-    scale_color_brewer(palette = "Set1", name = "Seed") +
-    labs(title = "Individual Seed Variability",
-         subtitle = "Black line = average across seeds",
-         x = "Number of Books", y = "RMSE") +
-    theme_minimal() +
-    theme(plot.title = element_text(face = "bold"))
-} else {
-  p4 <- ggplot() + theme_void()
-}
-
-# Combine
-combined_plot <- plot_grid(p1, p2, p3, p4, ncol = 2, labels = c("A", "B", "C", "D"))
-print(combined_plot)
-```
-
-
-
-
-
-```{r enhanced-visualization, fig.cap="Enhanced Analysis: Random Sampling Impact on Recommender Performance. Panel A shows RMSE across different catalog sizes with random sampling. Panel B displays sparsity levels - note how sparsity increases with more books. Panel C shows the relationship between sparsity and RMSE, demonstrating the sparsity-performance trade-off. Panel D displays data quality metrics (explicit ratings count) across catalog sizes.", fig.width=12, fig.height=10}
-# ============================================================================
-# ENHANCED VISUALIZATION
-# ============================================================================
-
-# Helper function to create plots
-create_plot <- function(data, x_var, y_var, title, subtitle, x_lab, y_lab, color, plot_type = "line") {
-  p <- ggplot(data %>% filter(!is.na(rmse)), aes_string(x = x_var, y = y_var)) +
-    labs(title = title, subtitle = subtitle, x = x_lab, y = y_lab) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(size = 12)
-    )
-  
-  if (plot_type == "line") {
-    p <- p + geom_line(size = 1.2, color = color) + geom_point(size = 3, color = color)
-  } else if (plot_type == "scatter") {
-    p <- p + geom_point(size = 3, alpha = 0.8, color = color) + 
-      geom_smooth(method = "lm", se = FALSE, size = 1, color = color)
-  }
-  
-  return(p)
-}
-
-if (exists("enhanced_results")) {
-  
-  # Create all plots using helper function
-  p1 <- create_plot(enhanced_results, "n_books", "rmse", 
-                   "RMSE by Catalog Size (Random Sampling)", 
-                   "Lower RMSE indicates better performance",
-                   "Number of Books in Catalog", "RMSE", "steelblue")
-  
-  p2 <- create_plot(enhanced_results, "n_books", "sparsity_pct",
-                   "Sparsity by Catalog Size",
-                   "Higher sparsity generally leads to worse performance", 
-                   "Number of Books in Catalog", "Sparsity (%)", "coral")
-  
-  p3 <- create_plot(enhanced_results, "sparsity_pct", "rmse",
-                   "Sparsity vs RMSE Relationship",
-                   "Higher sparsity correlates with worse performance",
-                   "Sparsity (%)", "RMSE", "darkgreen", "scatter")
-  
-  p4 <- create_plot(enhanced_results, "n_books", "explicit_ratings",
-                   "Explicit Ratings Count by Catalog Size", 
-                   "More explicit ratings generally improve model performance",
-                   "Number of Books in Catalog", "Number of Explicit Ratings", "purple")
-  
-  # Combine plots
-  enhanced_plot <- plot_grid(p1, p2, p3, p4, ncol = 2, nrow = 2, 
-                            labels = c("A", "B", "C", "D"), label_size = 14)
-  print(enhanced_plot)
-  
-} else {
-  cat("Enhanced results not available - run the enhanced analysis first\n")
-}
-
-# Original visualization (keeping for comparison)
-valid_results <- size_impact_results %>% filter(!is.na(rmse_mean))
-
-if (nrow(valid_results) >= 2) {
-  
-  # Panel A: RMSE Trend with Error Bars
-  p1 <- ggplot(valid_results, aes(x = n_books, y = rmse_mean)) +
-    geom_line(color = "steelblue", size = 1.3, linewidth = 1.3) +
-    geom_point(color = "steelblue", size = 4) +
-    geom_errorbar(aes(ymin = rmse_mean - rmse_se, ymax = rmse_mean + rmse_se),
-                  width = 5, color = "steelblue", alpha = 0.5) +
-    geom_point(data = valid_results[which.min(valid_results$rmse_mean), ],
-               color = "red", size = 6, shape = 18) +
-    geom_text(data = valid_results[which.min(valid_results$rmse_mean), ],
-              aes(label = paste0("Best: ", round(rmse_mean, 3), " ± ", round(rmse_se, 3))),
-              vjust = -1.5, hjust = 0.5, fontface = "bold", size = 3.5) +
-    labs(
-      title = "RMSE vs Catalog Size (Averaged Over 5 Seeds)",
-      subtitle = "Error bars show ± 1 standard error",
-      x = "Number of Books in Catalog",
-      y = "Mean RMSE"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      plot.subtitle = element_text(size = 11),
-      axis.title = element_text(size = 12),
-      axis.text = element_text(size = 10)
-    )
-  
-  # Panel B: Marginal Improvements
-  improvements_data <- valid_results %>% filter(!is.na(improvement))
-  
-  if (nrow(improvements_data) > 0) {
-    p2 <- ggplot(improvements_data, aes(x = n_books, y = improvement)) +
-      geom_bar(stat = "identity", fill = "coral", alpha = 0.8) +
-      geom_hline(yintercept = 0.02, linetype = "dashed", color = "darkred", size = 0.8) +
-      geom_hline(yintercept = 0, linetype = "solid", color = "gray40") +
-      annotate("text", 
-               x = max(improvements_data$n_books) * 0.7, 
-               y = 0.02,
-               label = "Small improvement threshold (0.02)", 
-               vjust = -0.5, size = 3.5, color = "darkred") +
-      labs(
-        title = "Marginal RMSE Improvements",
-        subtitle = "Benefit of adding more books to catalog",
-        x = "Catalog Size",
-        y = "Mean RMSE Improvement"
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 14),
-        axis.title = element_text(size = 12)
-      )
-  } else {
-    p2 <- ggplot() + 
-      annotate("text", x = 0.5, y = 0.5, 
-               label = "Insufficient data for marginal improvements", 
-               size = 5) +
-      theme_void()
-  }
-  
-  # Panel C: Individual Runs (Spaghetti Plot)
-  if (exists("size_impact_results_individual")) {
-    individual_valid <- size_impact_results_individual %>% filter(!is.na(rmse))
-    
-    p3 <- ggplot(individual_valid, aes(x = n_books, y = rmse, group = seed)) +
-      geom_line(aes(color = factor(seed)), alpha = 0.4, size = 0.8) +
-      geom_point(aes(color = factor(seed)), alpha = 0.4, size = 2) +
-      geom_line(data = valid_results, aes(x = n_books, y = rmse_mean, group = 1),
-                color = "black", size = 1.5, linewidth = 1.5, inherit.aes = FALSE) +
-      geom_point(data = valid_results, aes(x = n_books, y = rmse_mean),
-                 color = "black", size = 4, inherit.aes = FALSE) +
-      scale_color_brewer(palette = "Set1", name = "Seed") +
-      labs(
-        title = "RMSE Across Different Random Seeds",
-        subtitle = "Colored lines: individual runs; Black line: average",
-        x = "Catalog Size",
-        y = "RMSE"
-      ) +
-      theme_minimal() +
-      theme(
-        plot.title = element_text(face = "bold", size = 14),
-        axis.title = element_text(size = 12),
-        legend.position = "right"
-      )
-  } else {
-    p3 <- ggplot() + theme_void()
-  }
-  
-  # Panel D: Coefficient of Variation
-  cv_data <- valid_results %>%
-    mutate(cv = (rmse_sd / rmse_mean) * 100)
-  
-  p4 <- ggplot(cv_data, aes(x = n_books, y = cv)) +
-    geom_line(color = "purple", size = 1.3, linewidth = 1.3) +
-    geom_point(color = "purple", size = 4) +
-    geom_hline(yintercept = 5, linetype = "dashed", color = "darkred", alpha = 0.5) +
-    annotate("text", x = mean(cv_data$n_books), y = 5,
-             label = "Low variability threshold (5%)",
-             vjust = -0.5, size = 3, color = "darkred") +
-    labs(
-      title = "Variability Across Seeds",
-      subtitle = "Coefficient of Variation (CV = SD/Mean × 100%)",
-      x = "Catalog Size",
-      y = "CV (%)"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(size = 12)
-    )
-  
-  # Combine plots
-  combined_plot <- plot_grid(
-    p1, p2, p3, p4,
-    ncol = 2, nrow = 2,
-    labels = c("A", "B", "C", "D"),
-    label_size = 14
-  )
-  
-  print(combined_plot)
-  
-} else {
-  cat("Insufficient valid results for visualization\n")
-}
-```
-
-"In sparse recommendation scenarios, catalog size expansion without user engagement growth degrades performance. Quality > Quantity."
-
-🎓 For Your Report:
-Your conclusion should be:
-"Contrary to expectations, randomly expanding the catalog from 20 to 145 books decreased recommendation accuracy (RMSE increased from X to Y). Analysis reveals a strong positive correlation (r = Z) between matrix sparsity and prediction error. This finding suggests that in sparse-data scenarios, maintaining a curated catalog of frequently-rated items outperforms indiscriminate catalog expansion. The diminishing returns threshold occurs at approximately W books, beyond which sparsity effects dominate any benefits from increased catalog diversity."
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Discussion
-
-## Key Findings
-
-### Performance Ranking
-
-Based on the cross-validation results, we can rank the four collaborative filtering approaches:
-
-1. **Best Performer**: The method with the lowest RMSE demonstrates superior prediction accuracy
-2. **Trade-offs**: Each method exhibits distinct strengths and computational requirements
-3. **Consistency**: Standard deviation indicates prediction stability across folds
-
-### Method-Specific Observations
-
-**User-Based Collaborative Filtering:**
-- Leverages user similarity patterns effectively
-- Performance sensitive to neighborhood size (k parameter)
-- Confidence weighting improves handling of implicit feedback
-
-**Item-Based Collaborative Filtering:**
-- More stable than UBCF as item relationships change less frequently
-- Effective for sparse datasets with many users
-- Scalable for large item catalogs
-
-**Matrix Factorization:**
-- Captures latent factors in user-item interactions
-- Requires explicit ratings for optimal performance
-- Hyperparameter tuning critical for success
-
-**Neural Network:**
-- Learns complex non-linear patterns
-- Requires substantial training data
-- Computationally intensive but potentially most accurate
-
-## Cold Start Problem
-
-All four methods implement strategies for new users:
-- **Memory-based methods** (UBCF, IBCF): Use similarity to existing users/items
-- **Model-based methods** (MF, NN): Employ hybrid approaches with item popularity
-
-## Limitations and Future Work
-
-### Current Limitations
-
-1. **Dataset Size**: Limited to 145 books may not capture full diversity
-2. **Implicit Feedback**: Handling of zero ratings could be refined
-3. **Temporal Dynamics**: User preferences may evolve over time
-4. **Scalability**: Some methods computationally expensive for large datasets
-
-### Future Directions
-
-1. **Hybrid Ensemble**: Combine multiple methods to leverage their strengths
-2. **Deep Learning**: Explore advanced architectures (autoencoders, attention mechanisms)
-3. **Context-Aware**: Incorporate metadata (genres, authors, publication dates)
-4. **Online Learning**: Implement incremental updates as new ratings arrive
-
-\newpage
-
-# Conclusion
-
-This study successfully implemented and compared four collaborative filtering approaches for book recommendations. Key contributions include:
-
-1. **Comprehensive Evaluation**: Rigorous cross-validation across identical conditions
-2. **Cold Start Solutions**: Practical strategies for new user recommendations
-3. **Implementation Details**: Reusable code with consistent structure and documentation
-4. **Performance Insights**: Clear understanding of method trade-offs
-
-The results demonstrate that [method with best RMSE] achieves superior prediction accuracy, while each approach offers unique advantages depending on deployment constraints. The confidence-weighted similarity approach effectively handles implicit feedback, improving prediction quality across memory-based methods.
-
-For practitioners, we recommend:
-- **High accuracy requirements**: Use the best-performing method from cross-validation
-- **Real-time systems**: Consider IBCF for its stability and scalability  
-- **Cold start scenarios**: Implement hybrid approaches combining collaborative and content-based filtering
-- **Resource constraints**: Balance accuracy against computational requirements
-
-This research provides a solid foundation for developing production-ready book recommendation systems, with extensible code and methodologies applicable to other domains.
-
-
-
-
-
-# EDA stufff
-
-User Activity Analysis
-
-```{r user-activity-preliminary}
-# Group and count the number of records per User.ID
-hist_data <- data %>%
-  group_by(User.ID) %>%
-  count(name = "count")
-hist_data
-
-# Check the maximum count
-max(hist_data$count)
-
-```
-
-
-Demographic Data Integration
-
-```{r age-analysis}
-# Merge with user_info to include age 
-full_data <- data %>%
-  left_join(user_info, by = "User.ID")
-
-boxplot(full_data$Age) # Age has some very large outliers
-full_data <- full_data %>% filter(full_data$Age < 110) 
-# data %>% filter(Age < 5)
-```
-
-
-Exploratory Data Analysis
-
-Dataset Characteristics
-
-```{r data-summary}
-# Basic summary statistics
-data_summary <- data.frame(
-  Metric = c("Total Users", "Total Books", "Total Ratings", 
-             "Average Rating", "Rating Range"),
-  Value = c(
-    length(unique(data$User.ID)),
-    length(unique(data$ISBN)),
-    nrow(data),
-    round(mean(data$Book.Rating, na.rm = TRUE), 2),
-    paste(min(data$Book.Rating, na.rm = TRUE), "-", max(data$Book.Rating, na.rm = TRUE))
-  )
-)
-
-kable(data_summary, caption = "Dataset Summary") %>%
-  kable_styling(latex_options = "HOLD_position")
-
-# Rating distribution
-rating_dist <- table(data$Book.Rating)
-rating_dist_df <- data.frame(
-  Rating = names(rating_dist),
-  Count = as.numeric(rating_dist),
-  Percentage = round(as.numeric(rating_dist) / sum(rating_dist) * 100, 1)
-)
-
-kable(rating_dist_df, caption = "Rating Distribution") %>%
-  kable_styling(latex_options = "HOLD_position")
-
-# Rating histogram
-hist(data$Book.Rating, main = "Distribution of Book Ratings",
-     col = "steelblue", xlab = "Rating", ylab = "Frequency")
-
-# ================================================================
-# USER AND BOOK ACTIVITY ANALYSIS
-# ================================================================
-
-# User activity analysis
-user_activity <- data %>%
-  group_by(User.ID) %>%
-  summarise(
-    num_ratings = n(),
-    avg_rating = mean(Book.Rating, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# Book popularity analysis
-book_popularity <- data %>%
-  group_by(ISBN) %>%
-  summarise(
-    num_ratings = n(),
-    avg_rating = mean(Book.Rating, na.rm = TRUE),
-    .groups = "drop"
-  )
-
-# User activity summary table
-user_activity_summary <- data.frame(
-  Metric = c(
-    "Total Users",
-    "Min Ratings per User", 
-    "Max Ratings per User",
-    "Mean Ratings per User",
-    "Users with 1-2 Ratings",
-    "Users with 3-5 Ratings", 
-    "Users with 6-10 Ratings",
-    "Users with 11-20 Ratings",
-    "Users with >20 Ratings"
-  ),
-  Value = c(
-    nrow(user_activity),
-    min(user_activity$num_ratings),
-    max(user_activity$num_ratings),
-    round(mean(user_activity$num_ratings), 2),
-    sum(user_activity$num_ratings <= 2),
-    sum(user_activity$num_ratings >= 3 & user_activity$num_ratings <= 5),
-    sum(user_activity$num_ratings >= 6 & user_activity$num_ratings <= 10),
-    sum(user_activity$num_ratings >= 11 & user_activity$num_ratings <= 20),
-    sum(user_activity$num_ratings > 20)
-  )
-)
-
-kable(user_activity_summary, caption = "User Activity Distribution") %>%
-  kable_styling(latex_options = "HOLD_position")
-
-# Book popularity summary table
-book_popularity_summary <- data.frame(
-  Metric = c(
-    "Total Books",
-    "Min Ratings per Book",
-    "Max Ratings per Book", 
-    "Mean Ratings per Book",
-    "Books with 1-4 Ratings",
-    "Books with 5-9 Ratings",
-    "Books with 10-19 Ratings", 
-    "Books with 20-49 Ratings",
-    "Books with ≥50 Ratings"
-  ),
-  Value = c(
-    nrow(book_popularity),
-    min(book_popularity$num_ratings),
-    max(book_popularity$num_ratings),
-    round(mean(book_popularity$num_ratings), 2),
-    sum(book_popularity$num_ratings <= 4),
-    sum(book_popularity$num_ratings >= 5 & book_popularity$num_ratings <= 9),
-    sum(book_popularity$num_ratings >= 10 & book_popularity$num_ratings <= 19),
-    sum(book_popularity$num_ratings >= 20 & book_popularity$num_ratings <= 49),
-    sum(book_popularity$num_ratings >= 50)
-  )
-)
-
-kable(book_popularity_summary, caption = "Book Popularity Distribution") %>%
-  kable_styling(latex_options = "HOLD_position")
-
-# Dataset sparsity analysis
-total_possible_ratings <- length(unique(data$User.ID)) * length(unique(data$ISBN))
-actual_ratings <- nrow(data)
-sparsity_percentage <- round((1 - actual_ratings / total_possible_ratings) * 100, 2)
-
-sparsity_summary <- data.frame(
-  Metric = c(
-    "Total Possible User-Book Pairs",
-    "Actual Ratings",
-    "Sparsity Percentage",
-    "Data Density"
-  ),
-  Value = c(
-    format(total_possible_ratings, big.mark = ","),
-    format(actual_ratings, big.mark = ","),
-    paste0(sparsity_percentage, "%"),
-    paste0(round(100 - sparsity_percentage, 2), "%")
-  )
-)
-
-kable(sparsity_summary, caption = "Dataset Sparsity Analysis") %>%
-  kable_styling(latex_options = "HOLD_position")
-```
-
-
-
-
-
-
-```{r}
-# ============================================================================
-# DATASET SIZE IMPACT ANALYSIS - CORRECTED VERSION
-# ============================================================================
-# Research Question: How many book titles does a recommender system need
-# to achieve good prediction accuracy?
-# 
-# Methodology:
-# 1. For each catalog size (5, 10, 20, 30, 50, 75, 100, 145 books)
-# 2. Select TOP N most popular books (ensures larger catalogs include smaller ones)
-# 3. Split ratings 80/20, train MF model, evaluate RMSE
-# 4. Run 5 times with different random seeds for robustness
-# 5. Analyze sparsity impact and identify diminishing returns
-#
-# Key: Using top-N popular books ensures:
-# - Sufficient data for each catalog size
-# - Larger catalogs include all books from smaller catalogs
-# - Results are comparable across catalog sizes
-# ============================================================================
-
-analyze_catalog_sizes_corrected <- function(data, 
-                                           catalog_sizes = c(5, 10, 20, 30, 50, 75, 100, 145),
-                                           optimal_params_mf,
-                                           test_fraction = 0.2,
-                                           n_seeds = 5,
-                                           min_ratings_per_book = 5,
-                                           min_ratings_per_user = 3,
-                                           base_seed = 123) {
-  
-  set.seed(base_seed)
-  all_results <- data.frame()
-  
-  # Get book popularity rankings (used for all catalog sizes)
-  book_popularity <- data %>%
-    group_by(ISBN) %>%
-    summarise(n_ratings = n(), .groups = "drop") %>%
-    arrange(desc(n_ratings))
-  
-  cat("=== Dataset Size Impact Analysis ===\n")
-  cat("Method: Within-catalog rating prediction using TOP N popular books\n")
-  cat("Testing catalog sizes:", paste(catalog_sizes, collapse = ", "), "books\n")
-  cat("Evaluation: ", n_seeds, " independent runs per catalog size\n\n")
-  
-  # Verify we have enough books
-  if (nrow(book_popularity) < max(catalog_sizes)) {
-    stop("Not enough books in dataset. Available: ", nrow(book_popularity), 
-         ", Requested: ", max(catalog_sizes))
-  }
-  
-  # Process each catalog size
-  for (n_books in catalog_sizes) {
-    cat("=== Catalog Size:", n_books, "books ===\n")
-    
-    # Select TOP N most popular books
-    selected_books <- head(book_popularity$ISBN, n_books)
-    data_subset <- data %>% filter(ISBN %in% selected_books)
-    
-    cat("Selected", length(selected_books), "books,", 
-        nrow(data_subset), "total ratings\n")
-    
-    # Run multiple seeds for robustness
-    for (seed_num in 1:n_seeds) {
-      current_seed <- base_seed + seed_num
-      set.seed(current_seed)
-      
-      cat("  Seed", seed_num, "of", n_seeds, "...")
-      
-      # Create user-item matrix
-      matrix_result <- create_user_item_matrix(
-        data_subset,
-        min_ratings_per_book = min_ratings_per_book,
-        min_ratings_per_user = min_ratings_per_user,
-        implicit_rating = 4,
-        implicit_confidence = 0.5
-      )
-      
-      user_item_matrix <- matrix_result$ratings
-      original_matrix <- matrix_result$original_ratings
-      
-      # Get observed ratings
-      observed <- which(!is.na(user_item_matrix), arr.ind = TRUE)
-      n_ratings <- nrow(observed)
-      
-      # Calculate metrics
-      n_users <- nrow(user_item_matrix)
-      n_items <- ncol(user_item_matrix)
-      sparsity <- mean(is.na(user_item_matrix)) * 100
-      n_explicit <- sum(original_matrix[!is.na(original_matrix)] > 0)
-      n_implicit <- sum(original_matrix[!is.na(original_matrix)] == 0)
-      
-      # Check if we have enough data
-      if (n_ratings < 20) {
-        cat(" SKIP (only", n_ratings, "ratings)\n")
-        
-        # Store result with NA RMSE
-        all_results <- rbind(all_results, data.frame(
-          catalog_size = n_books,
-          seed = seed_num,
-          n_users = n_users,
-          n_items = n_items,
-          n_ratings_total = n_ratings,
-          n_explicit = n_explicit,
-          n_implicit = n_implicit,
-          sparsity_pct = sparsity,
-          n_train = NA,
-          n_test = NA,
-          rmse = NA,
-          reason = "Insufficient total ratings"
-        ))
-        next
-      }
-      
-      # Split ratings into train/test (80/20)
-      n_test <- floor(test_fraction * n_ratings)
-      test_indices <- sample(1:n_ratings, n_test)
-      train_indices <- setdiff(1:n_ratings, test_indices)
-      
-      train_obs <- observed[train_indices, , drop = FALSE]
-      test_obs <- observed[test_indices, , drop = FALSE]
-      
-      # Create training matrices (hide test ratings)
-      train_matrix <- user_item_matrix
-      train_original <- original_matrix
-      train_matrix[test_obs] <- NA
-      train_original[test_obs] <- NA
-      
-      # Prepare data for MF (explicit ratings only)
-      prepared <- prepare_recosystem_data(train_matrix, train_original)
-      n_train_explicit <- nrow(prepared$train_data)
-      
-      # Check if we have enough training data
-      if (n_train_explicit < 10) {
-        cat(" SKIP (only", n_train_explicit, "explicit training ratings)\n")
-        
-        all_results <- rbind(all_results, data.frame(
-          catalog_size = n_books,
-          seed = seed_num,
-          n_users = n_users,
-          n_items = n_items,
-          n_ratings_total = n_ratings,
-          n_explicit = n_explicit,
-          n_implicit = n_implicit,
-          sparsity_pct = sparsity,
-          n_train = n_train_explicit,
-          n_test = NA,
-          rmse = NA,
-          reason = "Insufficient training data"
-        ))
-        next
-      }
-      
-      # Train Matrix Factorization model
-      model <- train_reco_model(
-        train_data = prepared$train_data,
-        n_factors = optimal_params_mf$min$dim,
-        learning_rate = optimal_params_mf$min$lrate,
-        costp_l2 = optimal_params_mf$min$costp_l2,
-        costq_l2 = optimal_params_mf$min$costq_l2,
-        n_iter = 50,
-        n_threads = 4,
-        verbose = FALSE
-      )
-      
-      # Make predictions on test set
-      predictions <- numeric(nrow(test_obs))
-      
-      for (i in 1:nrow(test_obs)) {
-        user_idx <- test_obs[i, 1] - 1  # 0-indexed for recosystem
-        item_idx <- test_obs[i, 2] - 1
-        
-        pred_set <- data_memory(
-          user_index = user_idx,
-          item_index = item_idx,
-          index1 = FALSE
-        )
-        
-        pred <- model$predict(pred_set, out_memory())
-        predictions[i] <- pmax(pmin(pred, 10), 1)  # Clip to [1, 10]
-      }
-      
-      # Evaluate on EXPLICIT ratings only
-      test_original <- original_matrix[test_obs]
-      explicit_mask <- (test_original > 0)
-      n_test_explicit <- sum(explicit_mask)
-      
-      if (n_test_explicit == 0) {
-        cat(" SKIP (no explicit test ratings)\n")
-        
-        all_results <- rbind(all_results, data.frame(
-          catalog_size = n_books,
-          seed = seed_num,
-          n_users = n_users,
-          n_items = n_items,
-          n_ratings_total = n_ratings,
-          n_explicit = n_explicit,
-          n_implicit = n_implicit,
-          sparsity_pct = sparsity,
-          n_train = n_train_explicit,
-          n_test = 0,
-          rmse = NA,
-          reason = "No explicit test ratings"
-        ))
-        next
-      }
-      
-      # Calculate RMSE on explicit ratings
-      actual_explicit <- user_item_matrix[test_obs][explicit_mask]
-      pred_explicit <- predictions[explicit_mask]
-      rmse <- sqrt(mean((pred_explicit - actual_explicit)^2, na.rm = TRUE))
-      
-      # Store results
-      all_results <- rbind(all_results, data.frame(
-        catalog_size = n_books,
-        seed = seed_num,
-        n_users = n_users,
-        n_items = n_items,
-        n_ratings_total = n_ratings,
-        n_explicit = n_explicit,
-        n_implicit = n_implicit,
-        sparsity_pct = sparsity,
-        n_train = n_train_explicit,
-        n_test = n_test_explicit,
-        rmse = rmse,
-        reason = "Success"
-      ))
-      
-      cat(" RMSE =", round(rmse, 4), 
-          "(", n_test_explicit, "test ratings )\n")
-    }
-    
-    cat("\n")
-  }
-  
-  cat("=== Analysis Complete ===\n\n")
-  
-  # Aggregate results across seeds
-  summary_results <- all_results %>%
-    group_by(catalog_size) %>%
-    summarise(
-      n_valid_runs = sum(!is.na(rmse)),
-      rmse_mean = mean(rmse, na.rm = TRUE),
-      rmse_sd = sd(rmse, na.rm = TRUE),
-      rmse_se = sd(rmse, na.rm = TRUE) / sqrt(sum(!is.na(rmse))),
-      rmse_min = min(rmse, na.rm = TRUE),
-      rmse_max = max(rmse, na.rm = TRUE),
-      n_users_mean = round(mean(n_users, na.rm = TRUE), 0),
-      n_items_mean = round(mean(n_items, na.rm = TRUE), 0),
-      sparsity_mean = round(mean(sparsity_pct, na.rm = TRUE), 1),
-      n_explicit_mean = round(mean(n_explicit, na.rm = TRUE), 0),
-      n_train_mean = round(mean(n_train, na.rm = TRUE), 0),
-      n_test_mean = round(mean(n_test, na.rm = TRUE), 0),
-      .groups = "drop"
-    ) %>%
-    arrange(catalog_size) %>%
-    mutate(
-      # Calculate marginal improvements
-      rmse_change = rmse_mean - lag(rmse_mean),
-      improvement = -rmse_change,
-      percent_improvement = -rmse_change / lag(rmse_mean) * 100
-    )
-  
-  return(list(
-    detailed = all_results,
-    summary = summary_results
-  ))
-}
-
-# ============================================================================
-# RUN THE ANALYSIS
-# ============================================================================
-
-cat("Starting corrected catalog size analysis...\n\n")
-
-catalog_analysis_results <- analyze_catalog_sizes_corrected(
-  data = data,
-  catalog_sizes = c(5, 10, 20, 30, 50, 75, 100, 145),
-  optimal_params_mf = optimal_params_mf,
-  test_fraction = 0.2,
-  n_seeds = 5,
-  min_ratings_per_book = 5,
-  min_ratings_per_user = 3,
-  base_seed = 123
-)
-
-# Extract results
-size_impact_results <- catalog_analysis_results$summary
-size_impact_results_detailed <- catalog_analysis_results$detailed
-
-# ============================================================================
-# DISPLAY MAIN RESULTS TABLE
-# ============================================================================
-
-cat("\n=== SUMMARY RESULTS ===\n\n")
-
-kable(
-  size_impact_results %>% 
-    select(catalog_size, n_valid_runs, rmse_mean, rmse_se, sparsity_mean, 
-           n_explicit_mean, n_train_mean, n_test_mean),
-  caption = "Impact of Catalog Size on Prediction Accuracy (Corrected Analysis)",
-  digits = 4,
-  col.names = c("Catalog Size", "Valid Runs", "Mean RMSE", "SE", 
-                "Sparsity %", "Explicit Ratings", "Train Size", "Test Size"),
-  align = c("c", "c", "c", "c", "c", "c", "c", "c")
-) %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed")) %>%
-  row_spec(which.min(size_impact_results$rmse_mean), 
-           bold = TRUE, color = "white", background = "#4CAF50") %>%
-  footnote(
-    general = "TOP N popular books selected for each catalog size. Larger catalogs include all books from smaller catalogs. Results averaged over 5 independent runs.",
-    general_title = "Note:"
-  )
-```
-
-
-
 
 
 ```{r}
@@ -3946,10 +2740,10 @@ kable(
 # ============================================================================
 
 analyze_catalog_sizes_fair <- function(data, 
-                                      catalog_sizes = c(5, 10, 20, 30, 50, 75, 100, 145),
+                                      catalog_sizes = c(5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 145),
                                       optimal_params_mf,
                                       test_fraction = 0.2,
-                                      min_user_ratings = 5,  # Minimum ratings per user to participate
+                                      min_user_ratings = 3,  # Minimum ratings per user to participate
                                       n_seeds = 5,
                                       base_seed = 123) {
   
@@ -3965,7 +2759,8 @@ analyze_catalog_sizes_fair <- function(data,
   cat("=== Fair Catalog Size Analysis ===\n")
   cat("Method: Per-user 80/20 split on TOP N popular books\n")
   cat("Minimum ratings per user:", min_user_ratings, "\n")
-  cat("Testing catalog sizes:", paste(catalog_sizes, collapse = ", "), "\n\n")
+  cat("Testing catalog sizes:", paste(catalog_sizes, collapse = ", "), "\n")
+  cat("Total catalog sizes to test:", length(catalog_sizes), "\n\n")
   
   # Verify we have enough books
   if (nrow(book_popularity) < max(catalog_sizes)) {
@@ -4296,14 +3091,15 @@ analyze_catalog_sizes_fair <- function(data,
 # RUN THE ANALYSIS
 # ============================================================================
 
-cat("Starting fair catalog size analysis with per-user 80/20 split...\n\n")
+cat("Starting comprehensive catalog size analysis with per-user 80/20 split...\n")
+cat("Testing 17 catalog sizes from 5 to 145 books for detailed analysis...\n\n")
 
 catalog_analysis_results <- analyze_catalog_sizes_fair(
   data = data,
-  catalog_sizes = c(5, 10, 20, 30, 50, 75, 100, 145),
+  catalog_sizes = c(5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 145),
   optimal_params_mf = optimal_params_mf,
   test_fraction = 0.2,
-  min_user_ratings = 5,  # Only include users with at least 5 ratings
+  min_user_ratings = 3,  # Only include users with at least 3 ratings
   n_seeds = 5,
   base_seed = 123
 )
@@ -4322,7 +3118,7 @@ kable(
   size_impact_results %>% 
     select(catalog_size, n_valid_runs, rmse_mean, rmse_se, sparsity_mean, 
            n_users_mean, n_explicit_mean, n_train_mean, n_test_mean),
-  caption = "Impact of Catalog Size on Prediction Accuracy (Fair Per-User Split)",
+  caption = "Impact of Catalog Size on Prediction Accuracy (Comprehensive Analysis: 17 Sizes)",
   digits = 4,
   col.names = c("Catalog Size", "Valid Runs", "Mean RMSE", "SE", 
                 "Sparsity %", "Users", "Explicit Ratings", "Train", "Test"),
@@ -4332,7 +3128,7 @@ kable(
   row_spec(which.min(size_impact_results$rmse_mean), 
            bold = TRUE, color = "white", background = "#4CAF50") %>%
   footnote(
-    general = "Per-user 80/20 split ensures fair comparison. TOP N popular books used for each catalog size. Only users with ≥5 ratings included.",
+    general = "Comprehensive analysis testing 17 catalog sizes (5-145 books). Per-user 80/20 split ensures fair comparison. TOP N popular books used for each catalog size. Only users with ≥3 ratings included.",
     general_title = "Note:"
   )
 ```
@@ -4341,7 +3137,7 @@ kable(
 # VISUALIZATION AND INTERPRETATION
 # ============================================================================
 
-```{r dataset-size-visualization, fig.cap="Dataset Size Impact Analysis Results. Panel A shows RMSE trends across catalog sizes with error bars. Panel B displays sparsity patterns. Panel C reveals the relationship between sparsity and accuracy. Panel D shows individual seed variability.", fig.width=12, fig.height=10}
+```{r dataset-size-visualization, fig.cap="Comprehensive Dataset Size Impact Analysis Results. Panel A shows RMSE trends across 17 catalog sizes with error bars. Panel B displays sparsity patterns. Panel C reveals the relationship between sparsity and accuracy. Panel D shows individual seed variability.", fig.width=12, fig.height=10}
 
 # Panel A: RMSE Trend with Error Bars
 valid_results <- size_impact_results %>% filter(!is.na(rmse_mean))
@@ -4353,7 +3149,7 @@ p1 <- ggplot(valid_results, aes(x = catalog_size, y = rmse_mean)) +
                 width = 3, color = "steelblue", alpha = 0.7) +
   geom_point(data = valid_results[which.min(valid_results$rmse_mean), ],
              color = "red", size = 5, shape = 18) +
-  labs(title = "A. RMSE by Catalog Size",
+  labs(title = "A. RMSE by Catalog Size (17 Sizes)",
        subtitle = "Error bars show ±1 SE across 5 seeds. Red diamond indicates optimal size.",
        x = "Number of Books", y = "Mean RMSE") +
   theme_minimal() +
@@ -4363,7 +3159,7 @@ p1 <- ggplot(valid_results, aes(x = catalog_size, y = rmse_mean)) +
 p2 <- ggplot(valid_results, aes(x = catalog_size, y = sparsity_mean)) +
   geom_line(color = "coral", size = 1.2) +
   geom_point(color = "coral", size = 3) +
-  labs(title = "B. Matrix Sparsity by Catalog Size",
+  labs(title = "B. Matrix Sparsity by Catalog Size (17 Sizes)",
        subtitle = "Larger catalogs increase sparsity",
        x = "Number of Books", y = "Sparsity (%)") +
   theme_minimal() +
@@ -4421,7 +3217,8 @@ diminishing_point <- improvement_analysis %>%
   slice(1) %>%
   pull(catalog_size)
 
-cat("=== DATASET SIZE IMPACT ANALYSIS: KEY FINDINGS ===\n\n")
+cat("=== COMPREHENSIVE DATASET SIZE IMPACT ANALYSIS: KEY FINDINGS ===\n")
+cat("Analysis of 17 catalog sizes from 5 to 145 books\n\n")
 
 cat("1. OPTIMAL CATALOG SIZE:\n")
 cat("   • Best performance achieved with", optimal_size, "books\n")
@@ -4458,7 +3255,7 @@ recommendations <- data.frame(
 )
 
 kable(recommendations, 
-      caption = "Practical Recommendations for Catalog Size",
+      caption = "Practical Recommendations for Catalog Size (Based on 17-Size Analysis)",
       col.names = c("Scenario", "Books", "RMSE Range", "Sparsity Range", "Use Case"),
       align = c("l", "c", "c", "c", "l")) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
@@ -4473,8 +3270,273 @@ kable(recommendations,
 save(size_impact_results, size_impact_results_detailed, 
      file = "dataset_size_analysis_complete.Rdata")
 
-cat("✓ Dataset size analysis complete!\n")
+cat("✓ Comprehensive dataset size analysis complete!\n")
 cat("✓ Results saved to 'dataset_size_analysis_complete.Rdata'\n")
 cat("✓ Analysis provides evidence-based guidance on catalog size vs accuracy\n")
+cat("✓ Tested 17 catalog sizes for detailed performance insights\n")
 ```
+
+
+
+
+
+
+
+
+
+
+# Discussion
+
+## Key Findings
+
+### Performance Ranking
+
+Based on the cross-validation results, we can rank the four collaborative filtering approaches:
+
+1. **Best Performer**: The method with the lowest RMSE demonstrates superior prediction accuracy
+2. **Trade-offs**: Each method exhibits distinct strengths and computational requirements
+3. **Consistency**: Standard deviation indicates prediction stability across folds
+
+### Method-Specific Observations
+
+**User-Based Collaborative Filtering:**
+- Leverages user similarity patterns effectively
+- Performance sensitive to neighborhood size (k parameter)
+- Confidence weighting improves handling of implicit feedback
+
+**Item-Based Collaborative Filtering:**
+- More stable than UBCF as item relationships change less frequently
+- Effective for sparse datasets with many users
+- Scalable for large item catalogs
+
+**Matrix Factorization:**
+- Captures latent factors in user-item interactions
+- Requires explicit ratings for optimal performance
+- Hyperparameter tuning critical for success
+
+**Neural Network:**
+- Learns complex non-linear patterns
+- Requires substantial training data
+- Computationally intensive but potentially most accurate
+
+## Cold Start Problem
+
+All four methods implement strategies for new users:
+- **Memory-based methods** (UBCF, IBCF): Use similarity to existing users/items
+- **Model-based methods** (MF, NN): Employ hybrid approaches with item popularity
+
+## Limitations and Future Work
+
+### Current Limitations
+
+1. **Dataset Size**: Limited to 145 books may not capture full diversity
+2. **Implicit Feedback**: Handling of zero ratings could be refined
+3. **Temporal Dynamics**: User preferences may evolve over time
+4. **Scalability**: Some methods computationally expensive for large datasets
+
+### Future Directions
+
+1. **Hybrid Ensemble**: Combine multiple methods to leverage their strengths
+2. **Deep Learning**: Explore advanced architectures (autoencoders, attention mechanisms)
+3. **Context-Aware**: Incorporate metadata (genres, authors, publication dates)
+4. **Online Learning**: Implement incremental updates as new ratings arrive
+
+\newpage
+
+# Conclusion
+
+This study successfully implemented and compared four collaborative filtering approaches for book recommendations. Key contributions include:
+
+1. **Comprehensive Evaluation**: Rigorous cross-validation across identical conditions
+2. **Cold Start Solutions**: Practical strategies for new user recommendations
+3. **Implementation Details**: Reusable code with consistent structure and documentation
+4. **Performance Insights**: Clear understanding of method trade-offs
+
+The results demonstrate that [method with best RMSE] achieves superior prediction accuracy, while each approach offers unique advantages depending on deployment constraints. The confidence-weighted similarity approach effectively handles implicit feedback, improving prediction quality across memory-based methods.
+
+For practitioners, we recommend:
+- **High accuracy requirements**: Use the best-performing method from cross-validation
+- **Real-time systems**: Consider IBCF for its stability and scalability  
+- **Cold start scenarios**: Implement hybrid approaches combining collaborative and content-based filtering
+- **Resource constraints**: Balance accuracy against computational requirements
+
+This research provides a solid foundation for developing production-ready book recommendation systems, with extensible code and methodologies applicable to other domains.
+
+
+
+
+
+# EDA stufff
+
+User Activity Analysis
+
+```{r user-activity-preliminary}
+# Group and count the number of records per User.ID
+hist_data <- data %>%
+  group_by(User.ID) %>%
+  count(name = "count")
+hist_data
+
+# Check the maximum count
+max(hist_data$count)
+
+```
+
+
+Demographic Data Integration
+
+```{r age-analysis}
+# Merge with user_info to include age 
+full_data <- data %>%
+  left_join(user_info, by = "User.ID")
+
+boxplot(full_data$Age) # Age has some very large outliers
+full_data <- full_data %>% filter(full_data$Age < 110) 
+# data %>% filter(Age < 5)
+```
+
+
+Exploratory Data Analysis
+
+Dataset Characteristics
+
+```{r data-summary}
+# Basic summary statistics
+data_summary <- data.frame(
+  Metric = c("Total Users", "Total Books", "Total Ratings", 
+             "Average Rating", "Rating Range"),
+  Value = c(
+    length(unique(data$User.ID)),
+    length(unique(data$ISBN)),
+    nrow(data),
+    round(mean(data$Book.Rating, na.rm = TRUE), 2),
+    paste(min(data$Book.Rating, na.rm = TRUE), "-", max(data$Book.Rating, na.rm = TRUE))
+  )
+)
+
+kable(data_summary, caption = "Dataset Summary") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+# Rating distribution
+rating_dist <- table(data$Book.Rating)
+rating_dist_df <- data.frame(
+  Rating = names(rating_dist),
+  Count = as.numeric(rating_dist),
+  Percentage = round(as.numeric(rating_dist) / sum(rating_dist) * 100, 1)
+)
+
+kable(rating_dist_df, caption = "Rating Distribution") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+# Rating histogram
+hist(data$Book.Rating, main = "Distribution of Book Ratings",
+     col = "steelblue", xlab = "Rating", ylab = "Frequency")
+
+# ================================================================
+# USER AND BOOK ACTIVITY ANALYSIS
+# ================================================================
+
+# User activity analysis
+user_activity <- data %>%
+  group_by(User.ID) %>%
+  summarise(
+    num_ratings = n(),
+    avg_rating = mean(Book.Rating, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Book popularity analysis
+book_popularity <- data %>%
+  group_by(ISBN) %>%
+  summarise(
+    num_ratings = n(),
+    avg_rating = mean(Book.Rating, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# User activity summary table
+user_activity_summary <- data.frame(
+  Metric = c(
+    "Total Users",
+    "Min Ratings per User", 
+    "Max Ratings per User",
+    "Mean Ratings per User",
+    "Users with 1-2 Ratings",
+    "Users with 3-5 Ratings", 
+    "Users with 6-10 Ratings",
+    "Users with 11-20 Ratings",
+    "Users with >20 Ratings"
+  ),
+  Value = c(
+    nrow(user_activity),
+    min(user_activity$num_ratings),
+    max(user_activity$num_ratings),
+    round(mean(user_activity$num_ratings), 2),
+    sum(user_activity$num_ratings <= 2),
+    sum(user_activity$num_ratings >= 3 & user_activity$num_ratings <= 5),
+    sum(user_activity$num_ratings >= 6 & user_activity$num_ratings <= 10),
+    sum(user_activity$num_ratings >= 11 & user_activity$num_ratings <= 20),
+    sum(user_activity$num_ratings > 20)
+  )
+)
+
+kable(user_activity_summary, caption = "User Activity Distribution") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+# Book popularity summary table
+book_popularity_summary <- data.frame(
+  Metric = c(
+    "Total Books",
+    "Min Ratings per Book",
+    "Max Ratings per Book", 
+    "Mean Ratings per Book",
+    "Books with 1-4 Ratings",
+    "Books with 5-9 Ratings",
+    "Books with 10-19 Ratings", 
+    "Books with 20-49 Ratings",
+    "Books with ≥50 Ratings"
+  ),
+  Value = c(
+    nrow(book_popularity),
+    min(book_popularity$num_ratings),
+    max(book_popularity$num_ratings),
+    round(mean(book_popularity$num_ratings), 2),
+    sum(book_popularity$num_ratings <= 4),
+    sum(book_popularity$num_ratings >= 5 & book_popularity$num_ratings <= 9),
+    sum(book_popularity$num_ratings >= 10 & book_popularity$num_ratings <= 19),
+    sum(book_popularity$num_ratings >= 20 & book_popularity$num_ratings <= 49),
+    sum(book_popularity$num_ratings >= 50)
+  )
+)
+
+kable(book_popularity_summary, caption = "Book Popularity Distribution") %>%
+  kable_styling(latex_options = "HOLD_position")
+
+# Dataset sparsity analysis
+total_possible_ratings <- length(unique(data$User.ID)) * length(unique(data$ISBN))
+actual_ratings <- nrow(data)
+sparsity_percentage <- round((1 - actual_ratings / total_possible_ratings) * 100, 2)
+
+sparsity_summary <- data.frame(
+  Metric = c(
+    "Total Possible User-Book Pairs",
+    "Actual Ratings",
+    "Sparsity Percentage",
+    "Data Density"
+  ),
+  Value = c(
+    format(total_possible_ratings, big.mark = ","),
+    format(actual_ratings, big.mark = ","),
+    paste0(sparsity_percentage, "%"),
+    paste0(round(100 - sparsity_percentage, 2), "%")
+  )
+)
+
+kable(sparsity_summary, caption = "Dataset Sparsity Analysis") %>%
+  kable_styling(latex_options = "HOLD_position")
+```
+
+
+
+
 
