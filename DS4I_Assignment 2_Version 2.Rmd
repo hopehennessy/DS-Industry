@@ -1873,11 +1873,7 @@ prepare_h2o_data <- function(user_item_matrix, original_ratings_matrix = NULL) {
 # NN: HYPERPARAMETER TUNING WITH GRID SEARCH
 # ============================================================================
 
-# Initialize H2O cluster (check if already running)
-if (!h2o::h2o.clusterIsUp()) {
-  suppressMessages(h2o::h2o.init(ip = "localhost", port = 54321, nthreads = 4))
-}
-h2o::h2o.no_progress()
+h2o.init(ip = "localhost", port = 54321, nthreads = 4)
 
 # # Prepare data
 # h2o_data_tuning <- prepare_h2o_data(user_item_matrix, original_ratings_matrix)
