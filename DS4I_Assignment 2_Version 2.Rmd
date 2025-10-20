@@ -2409,9 +2409,23 @@ To examine the effect of catalog size on prediction accuracy, the number of book
 
 # 4. Results and Evaluation
 
+
+## Model Optimization
+
+Prior to comparative evaluation, hyperparameters were optimized for model-based approaches.
+
+For the neural network, a grid search across 24 configurations assessed the impact of network depth, activation functions, and regularization strength on predictive performance. The optimal configuration employed Tanh activation, two hidden layers with 64 and 32 units, and L2 regularization of 0.0001, achieving a cross-validation RMSE of 1.899 (Table 3). This architecture balanced model complexity with generalization. Analysis of the full grid search results (Table 4) showed that Tanh activation consistently outperformed ReLU across all architectures, while deeper networks with three or more layers exhibited signs of overfitting and diminishing returns. Single-layer architectures were insufficient to capture the non-linear patterns in user–item interactions, highlighting the benefit of moderate architectural depth.
+
+For matrix factorization, hyperparameter tuning using the recosystem package explored combinations of latent dimensionality (10, 20, 30), learning rates (0.01, 0.05, 0.1), and L2 regularization strengths (0.01, 0.1) for both user and item factors. The optimal configuration consisted of 20 latent dimensions, a learning rate of 0.1, and L2 regularization of 0.01 for both user and item factors. These settings effectively balanced model expressiveness with regularization, enabling the matrix factorization model to capture latent preference structures while maintaining generalization to unseen ratings in the highly sparse dataset. **referr to table here??**
+
+
 ## 4.1 Cross-Validation Performance
 
-Comparison The 5-fold cross-validation analysis revealed substantial differences in performance across the four collaborative filtering methods (Table 2, Figure 2). Matrix Factorization achieved the lowest RMSE of 1.820 (SD = 0.020), making it the most accurate approach for this dataset. Neural Networks performed comparably, with an RMSE of 1.899 (SD = 0.053), demonstrating that model-based methods substantially outperform memory-based techniques. Item-Based Collaborative Filtering achieved an RMSE of 2.746 (SD = 0.018), while User-Based Collaborative Filtering recorded 3.182 (SD = 0.047). The gap between the best (MF) and worst (UBCF) methods corresponds to a 43% reduction in prediction error, highlighting the importance of algorithm choice in sparse datasets. Prediction consistency, measured by standard deviation across folds, was generally low for all methods, indicating stable performance.
+The 5-fold cross-validation analysis revealed substantial performance differences across the four collaborative filtering methods (Table 2, Figure 2). Matrix Factorization achieved the lowest RMSE of 1.820 (SD = 0.020), establishing it as the most accurate approach for this dataset. Neural Networks performed comparably with an RMSE of 1.899 (SD = 0.053), demonstrating that model-based methods substantially outperform memory-based techniques in sparse environments. Item-Based Collaborative Filtering achieved an RMSE of 2.746 (SD = 0.018), while User-Based Collaborative Filtering recorded the highest error at 3.182 (SD = 0.047).
+
+The 43% reduction in prediction error between the best (MF) and worst (UBCF) methods underscores the critical importance of algorithm selection in sparse datasets. This performance gap reflects fundamental differences in how methods handle sparsity: model-based approaches learn compact latent representations that generalize across sparse observations, while memory-based methods rely on direct similarity calculations that become unreliable when user-item overlap is limited. The superior performance of IBCF over UBCF (14% lower RMSE) aligns with established findings that item-item relationships exhibit greater stability than user-user similarities, as items demonstrate consistent co-occurrence patterns even when individual user profiles are incomplete.
+
+Prediction consistency, measured by standard deviation across folds, was generally low for all methods (SD < 0.053), indicating stable performance. Neural Networks exhibited slightly higher variability (SD = 0.053) compared to other methods, likely reflecting the stochastic nature of gradient-based optimization despite fixed random seeds. Matrix Factorization demonstrated exceptional consistency (SD = 0.020), suggesting robust convergence of the parallel stochastic gradient descent algorithm.
 
 ```{r comprehensive-comparison}
 # ============================================================================
@@ -2609,9 +2623,6 @@ Sharp improvements occurred in the early phase: expanding from 5 to 10 books red
 This non-monotonic pattern reflects two competing effects. In the early phase, increasing the number of books improves latent factor estimation by providing richer training data. In the later phase, however, adding less-rated titles introduces noise that degrades model performance. Analysis of standard errors supports this interpretation: smaller catalogs (5–30 books) exhibit higher variability (SE 0.0153–0.0895), while larger catalogs (50+ books) demonstrate more consistent performance (SE 0.0057–0.0266). This increased stability reflects the model's ability to learn robust patterns with sufficient training data, even when absolute accuracy plateaus.
 
 Sparsity increases steadily from 32.3% at 5 books to 94.0% at 145 books (Appendix C.2..........). Notably, the optimal performance at 50 books occurs at 86.7% sparsity, demonstrating that matrix factorization effectively handles highly sparse environments through latent factor modeling. This robustness highlights a key advantage of model-based collaborative filtering in sparse recommendation settings.
-
-
-
 
 
 ```{r}
@@ -3025,10 +3036,6 @@ ggplot(size_impact_results, aes(x = catalog_size, y = rmse_mean)) +
   theme(plot.title = element_text(face = "bold", size = 14))
 
 ```
-
-
-
-
 
 
 ```{r cleanup, include=FALSE}
